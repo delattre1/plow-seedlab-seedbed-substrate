@@ -42,12 +42,15 @@ PREFIX="${2:-sub}"
 spin_one(){
   local ctr="$1" vol
   vol="$($LEASE acquire "$ctr" 2>/dev/null)" || { printf 'NO_FREE_VOLUME\t%s\t-\n' "$ctr"; return 3; }
+  # SPIN_CMD: optional container command. Default empty = rely on the golden
+  # image's long-running entrypoint. Set it (e.g. "sleep infinity") for a base
+  # image whose default command would exit under `-d`.
   if $DOCKER run -d --init --name "$ctr" --hostname "$ctr" \
         --add-host host.docker.internal:host-gateway \
         --cap-add=NET_ADMIN --device /dev/net/tun:/dev/net/tun \
         -e NODE_NAME="$ctr" \
         -v "$vol:$CLAUDE_MOUNT" \
-        "$GOLDEN_IMAGE" >/dev/null 2>&1; then
+        "$GOLDEN_IMAGE" ${SPIN_CMD:-} >/dev/null 2>&1; then
     printf 'SPUN\t%s\t%s\n' "$ctr" "$vol"
   else
     $LEASE release "$vol" >/dev/null 2>&1     # roll back the lease on a failed run
