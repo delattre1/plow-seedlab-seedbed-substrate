@@ -93,16 +93,28 @@ for i in $(seq 1 "$N"); do cat "$TMP/$i"; done | sort > "$TMP/all"
 mapfile -t lines < "$TMP/all"
 
 ready=0 failed=0
+# Wait for readiness CONCURRENTLY (booted markers appear in parallel) so per-container
+# timeouts never stack — wall-clock = slowest boot, not the sum.
+WTMP="$(mktemp -d)"
 for l in "${lines[@]}"; do
   res="$(cut -f1 <<<"$l")"; ctr="$(cut -f2 <<<"$l")"; vol="$(cut -f3 <<<"$l")"
   case "$res" in
-    SPUN)
-      if wait_ready "$ctr"; then echo "  READY   $ctr  <- $vol"; ready=$((ready+1))
-      else echo "  TIMEOUT $ctr  <- $vol (no SUBSTRATE_READY in ${READY_TIMEOUT}s)"; failed=$((failed+1)); fi ;;
-    NO_FREE_VOLUME) echo "  FAILFAST $ctr (bank full — no free authed volume; nothing leased)"; failed=$((failed+1)) ;;
-    RUN_FAILED)     echo "  RUNFAIL  $ctr (docker run failed; lease rolled back)"; failed=$((failed+1)) ;;
+    SPUN) ( if wait_ready "$ctr"; then echo "READY $ctr $vol"; else echo "TIMEOUT $ctr $vol"; fi > "$WTMP/$ctr" ) & ;;
+    NO_FREE_VOLUME) echo "NOFREE $ctr -" > "$WTMP/$ctr" ;;
+    RUN_FAILED)     echo "RUNFAIL $ctr $vol" > "$WTMP/$ctr" ;;
   esac
 done
+wait
+for f in "$WTMP"/*; do
+  read -r st ctr vol < "$f"
+  case "$st" in
+    READY)   echo "  READY    $ctr  <- $vol"; ready=$((ready+1)) ;;
+    TIMEOUT) echo "  TIMEOUT  $ctr  <- $vol (no ready marker in ${READY_TIMEOUT}s)"; failed=$((failed+1)) ;;
+    NOFREE)  echo "  FAILFAST $ctr (bank full — no free authed volume; nothing leased)"; failed=$((failed+1)) ;;
+    RUNFAIL) echo "  RUNFAIL  $ctr (docker run failed; lease rolled back)"; failed=$((failed+1)) ;;
+  esac
+done
+rm -rf "$WTMP"
 ELAPSED=$(( SECONDS - START ))
 echo "spin: $ready READY, $failed failed, in ${ELAPSED}s (bank free now=$($LEASE free-count))"
 [ "$failed" = 0 ]

@@ -92,8 +92,8 @@ echo $! > "$INSTALL_DIR/run/ttyd.pid"
 
 # ---- 5. assert fast READY-TO-USE gates, write booted marker ------------------
 ready_ok=1
-# auth present (leased volume mounted + authed)
-claude auth status --text >/dev/null 2>&1 || ready_ok=0
+# auth present (leased volume mounted + authed) — fast file check, no `claude` spawn
+[ -s ~/.claude/.credentials.json ] || ready_ok=0
 # queue-client alive
 [ -f "$INSTALL_DIR/run/queue-client.pid" ] && kill -0 "$(cat "$INSTALL_DIR/run/queue-client.pid")" 2>/dev/null || ready_ok=0
 # ttyd serving locally
