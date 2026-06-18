@@ -28,6 +28,13 @@ CENTRAL_QUEUE_SECRET="${CENTRAL_QUEUE_SECRET:?}"
 CENTRAL_BOSS="${CENTRAL_BOSS:-daniels-MacBook-Pro-2/main:Boss}"
 log(){ echo "[golden-boot:$NODE_NAME] $*"; }
 
+# ---- 0. working DNS (the golden image baked the build node's resolv.conf, which
+#         points at a LAN/MagicDNS resolver unreachable from a fresh container's
+#         netns). Reset to public resolvers so the authkey mint resolves;
+#         tailscale takes over DNS after `up`. -----------------------------------
+sudo bash -c 'printf "nameserver 8.8.8.8\nnameserver 1.1.1.1\n" > /etc/resolv.conf' 2>/dev/null || \
+  printf 'nameserver 8.8.8.8\nnameserver 1.1.1.1\n' | sudo tee /etc/resolv.conf >/dev/null 2>&1 || true
+
 # ---- 1. fresh Tailscale identity (reset baked state, mint authkey, up) -------
 log "minting tailscale authkey ..."
 TS_AUTHKEY="$(curl -fsS -u "${TAILSCALE_API_KEY}:" -X POST \
