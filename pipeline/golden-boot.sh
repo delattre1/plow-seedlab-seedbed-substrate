@@ -71,9 +71,23 @@ EOC
 # ---- 3. a tmux session so ttyd is attachable --------------------------------
 tmux has-session -t mc-main 2>/dev/null || tmux new-session -d -s mc-main -n Boss
 
-# ---- 4. start daemons (queue-client -> central, ttyd supervisor, recorder) ---
+# ---- 4. start daemons (self-contained: queue-client -> central, ttyd supervisor) ----
+# Started directly from the baked mypeople components so the boot does not depend
+# on a start-daemons.sh that may not exist in every golden snapshot.
 log "starting daemons ..."
-bash ~/start-daemons.sh >/dev/null 2>&1 || true
+mkdir -p "$INSTALL_DIR/run"
+set -a; . ~/.config/mypeople/queue.env; set +a
+# queue-client: JOIN the central queue (reads QUEUE_URL/QUEUE_SECRET/HOST_ID from env)
+if [ -f "$INSTALL_DIR/run/queue-client.pid" ]; then kill "$(cat "$INSTALL_DIR/run/queue-client.pid")" 2>/dev/null || true; fi
+setsid python3 -u "$INSTALL_DIR/bin/queue-client.py" > "$INSTALL_DIR/run/queue-client.log" 2>&1 </dev/null &
+echo $! > "$INSTALL_DIR/run/queue-client.pid"
+# ttyd under a supervisor (a stray kill must not blank the attach window)
+if [ -f "$INSTALL_DIR/run/ttyd.pid" ]; then kill "$(cat "$INSTALL_DIR/run/ttyd.pid")" 2>/dev/null || true; fi
+pkill -x ttyd 2>/dev/null || true
+setsid bash -c 'while true; do ttyd -W -a -p 7681 -t disableLeaveAlert=true -t fontSize=13 tmux attach; sleep 2; done' \
+  > "$INSTALL_DIR/run/ttyd.log" 2>&1 </dev/null &
+echo $! > "$INSTALL_DIR/run/ttyd.pid"
+# optional recorder, only if present (full recording proof is a one-time image-proof concern)
 [ -x ~/start-recorder.sh ] && bash ~/start-recorder.sh >/dev/null 2>&1 || true
 
 # ---- 5. assert fast READY-TO-USE gates, write booted marker ------------------
