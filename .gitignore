@@ -1,0 +1,34 @@
+# PUBLIC REPO — NEVER COMMIT SECRETS
+# Claude auth (tokens / volumes), queue secrets, Tailscale authkeys, any credentials.
+# Reference all secrets via env vars or an external secret store — never in git.
+
+# env / secrets
+.env
+.env.*
+*.env
+secrets/
+*.secret
+*.secrets
+
+# claude auth tokens / volumes
+auth/
+*.authvolume
+claude-auth*
+.claude/.credentials*
+.credentials.json
+
+# tailscale authkeys
+*.authkey
+ts-authkey*
+tailscale-authkey*
+
+# queue / app secrets
+QUEUE_SECRET
+*queue-secret*
+
+# generic credential files
+*.pem
+*.key
+*.p12
+id_rsa*
+credentials*
