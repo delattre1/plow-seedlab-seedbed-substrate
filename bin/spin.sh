@@ -29,6 +29,10 @@ ROOT="$(cd "$HERE/.." && pwd)"
 [ -f "$ROOT/bank/bank.env" ] && . "$ROOT/bank/bank.env"
 LEASE="$ROOT/lease/lease.sh"
 DOCKER="${DOCKER:-docker}"
+# Runtime secrets for the boot entrypoint (gitignored, host-local; never in repo).
+SUBSTRATE_ENV="${SUBSTRATE_ENV:-$HOME/.config/seedbed/substrate.env}"
+# shellcheck disable=SC1090
+[ -f "$SUBSTRATE_ENV" ] && . "$SUBSTRATE_ENV"
 GOLDEN_IMAGE="${GOLDEN_IMAGE:-seedbed-golden:latest}"
 CLAUDE_MOUNT="${CLAUDE_MOUNT:-/home/tester/.claude}"
 READY_MARKER="${READY_MARKER:-/home/tester/SUBSTRATE_READY.json}"
@@ -43,12 +47,21 @@ spin_one(){
   local ctr="$1" vol
   vol="$($LEASE acquire "$ctr" 2>/dev/null)" || { printf 'NO_FREE_VOLUME\t%s\t-\n' "$ctr"; return 3; }
   # SPIN_CMD: optional container command. Default empty = rely on the golden
-  # image's long-running entrypoint. Set it (e.g. "sleep infinity") for a base
-  # image whose default command would exit under `-d`.
+  # image's long-running entrypoint (golden-boot.sh). Set it (e.g. "sleep
+  # infinity") for a base image whose default command would exit under `-d`.
+  #
+  # Runtime secrets (NEVER baked): injected via -e from a host-local gitignored
+  # file (default ~/.config/seedbed/substrate.env). The boot entrypoint uses them
+  # to mint a fresh tailscale identity and JOIN the central queue.
   if $DOCKER run -d --init --name "$ctr" --hostname "$ctr" \
         --add-host host.docker.internal:host-gateway \
         --cap-add=NET_ADMIN --device /dev/net/tun:/dev/net/tun \
         -e NODE_NAME="$ctr" \
+        -e TAILSCALE_API_KEY="${TAILSCALE_API_KEY:-}" \
+        -e TS_TAILNET="${TS_TAILNET:--}" \
+        -e CENTRAL_QUEUE_URL="${CENTRAL_QUEUE_URL:-}" \
+        -e CENTRAL_QUEUE_SECRET="${CENTRAL_QUEUE_SECRET:-}" \
+        -e CENTRAL_BOSS="${CENTRAL_BOSS:-daniels-MacBook-Pro-2/main:Boss}" \
         -v "$vol:$CLAUDE_MOUNT" \
         "$GOLDEN_IMAGE" ${SPIN_CMD:-} >/dev/null 2>&1; then
     printf 'SPUN\t%s\t%s\n' "$ctr" "$vol"

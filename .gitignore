@@ -34,3 +34,4 @@ QUEUE_SECRET
 *.p12
 id_rsa*
 credentials*
+substrate.env
