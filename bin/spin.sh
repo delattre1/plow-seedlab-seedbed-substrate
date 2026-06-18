@@ -62,6 +62,11 @@ spin_one(){
         -e CENTRAL_QUEUE_URL="${CENTRAL_QUEUE_URL:-}" \
         -e CENTRAL_QUEUE_SECRET="${CENTRAL_QUEUE_SECRET:-}" \
         -e CENTRAL_BOSS="${CENTRAL_BOSS:-daniels-MacBook-Pro-2/main:Boss}" \
+        -e TKMX_API_KEY="${TKMX_API_KEY:-}" \
+        -e TKMX_USERNAME="${TKMX_USERNAME:-}" \
+        -e TKMX_SERVER_URL="${TKMX_SERVER_URL:-https://tokenmaxxing.odio.dev}" \
+        -e TKMX_TEAM="${TKMX_TEAM:-seedbed}" \
+        -e TKMX_REPORT_INTERVAL="${TKMX_REPORT_INTERVAL:-300}" \
         -v "$vol:$CLAUDE_MOUNT" \
         "$GOLDEN_IMAGE" ${SPIN_CMD:-} >/dev/null 2>&1; then
     printf 'SPUN\t%s\t%s\n' "$ctr" "$vol"

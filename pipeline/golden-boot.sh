@@ -87,7 +87,38 @@ pkill -x ttyd 2>/dev/null || true
 setsid bash -c 'while true; do ttyd -W -a -p 7681 -t disableLeaveAlert=true -t fontSize=13 tmux attach; sleep 2; done' \
   > "$INSTALL_DIR/run/ttyd.log" 2>&1 </dev/null &
 echo $! > "$INSTALL_DIR/run/ttyd.pid"
-# optional recorder, only if present (full recording proof is a one-time image-proof concern)
+# ---- 4b. tkmx token-burn reporter (REQUIRED: every substrate reports under the
+#         CEO's account). Creds injected at RUN time (never baked); land only in
+#         ~/.config/tkmx/.env at chmod 600. CLIENT_ID = mp-<node> so the node is a
+#         stable, hostname-identified machine on the leaderboard. -----------------
+if [ -n "${TKMX_API_KEY:-}" ] && [ -d ~/tkmx-client ]; then
+  AGENTSVIEW_BIN="$HOME/.local/bin/agentsview"; [ -x "$AGENTSVIEW_BIN" ] || AGENTSVIEW_BIN="$(command -v agentsview || true)"
+  mkdir -p ~/.config/tkmx
+  cat > ~/.config/tkmx/.env <<EOF
+USERNAME=${TKMX_USERNAME:-}
+API_KEY=${TKMX_API_KEY}
+SERVER_URL=${TKMX_SERVER_URL:-https://tokenmaxxing.odio.dev}
+CLIENT_ID=mp-${NODE_NAME}
+TEAM=${TKMX_TEAM:-seedbed}
+AGENTSVIEW_BIN=${AGENTSVIEW_BIN}
+REPORT_DEV_STATS=true
+REPORT_SESSION_STATS=true
+REPORT_MACHINE_CONFIG=true
+REPORT_DAYS=1
+EOF
+  chmod 600 ~/.config/tkmx/.env
+  cp ~/.config/tkmx/.env ~/tkmx-client/.env && chmod 600 ~/tkmx-client/.env
+  # reporter daemon: report now + every interval
+  setsid bash -c 'while true; do (cd "$HOME/tkmx-client" && npm run --silent report); sleep "${TKMX_REPORT_INTERVAL:-300}"; done' \
+    > "$INSTALL_DIR/run/tkmx-report.log" 2>&1 </dev/null &
+  echo $! > "$INSTALL_DIR/run/tkmx-report.pid"
+  log "tkmx reporter started (client_id=mp-$NODE_NAME, reports under ${TKMX_USERNAME:-CEO})"
+else
+  log "WARN: tkmx not started (TKMX_API_KEY not injected or tkmx-client absent)"
+fi
+
+# optional recorder of the worker pane (the HYDRATION recording is invoked separately
+# via pipeline/hydrate-recorded.sh — it records the product-seed build session).
 [ -x ~/start-recorder.sh ] && bash ~/start-recorder.sh >/dev/null 2>&1 || true
 
 # ---- 5. assert fast READY-TO-USE gates, write booted marker ------------------
@@ -100,10 +131,14 @@ ready_ok=1
 for i in $(seq 1 20); do code=$(curl -fsS -o /dev/null -w '%{http_code}' --max-time 3 "http://127.0.0.1:7681/" 2>/dev/null); [ "$code" = 200 ] && break; sleep 0.3; done
 [ "${code:-}" = 200 ] || ready_ok=0
 
+# tkmx reporter alive (token-burn reporting under the CEO's account)
+tkmx_up=false
+[ -f "$INSTALL_DIR/run/tkmx-report.pid" ] && kill -0 "$(cat "$INSTALL_DIR/run/tkmx-report.pid")" 2>/dev/null && tkmx_up=true
+
 if [ "$ready_ok" = 1 ]; then
-  printf '{"node":"%s","tailnet_ip":"%s","ready":"use","booted":true,"reverify":false}\n' "$NODE_NAME" "$IP" > ~/SUBSTRATE_BOOTED.json
+  printf '{"node":"%s","tailnet_ip":"%s","ready":"use","booted":true,"reverify":false,"tkmx_reporter":%s}\n' "$NODE_NAME" "$IP" "$tkmx_up" > ~/SUBSTRATE_BOOTED.json
   chmod 600 ~/SUBSTRATE_BOOTED.json
-  log "READY-TO-USE (authed + tailnet + central queue + ttyd). marker: ~/SUBSTRATE_BOOTED.json"
+  log "READY-TO-USE (authed + tailnet + central queue + ttyd; tkmx_reporter=$tkmx_up). marker: ~/SUBSTRATE_BOOTED.json"
 else
   log "WARN: not all fast gates green (auth/queue/ttyd) — see daemon logs"
 fi
