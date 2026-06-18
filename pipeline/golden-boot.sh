@@ -108,9 +108,15 @@ REPORT_DAYS=1
 EOF
   chmod 600 ~/.config/tkmx/.env
   cp ~/.config/tkmx/.env ~/tkmx-client/.env && chmod 600 ~/tkmx-client/.env
-  # reporter daemon: report now + every interval
-  setsid bash -c 'while true; do (cd "$HOME/tkmx-client" && npm run --silent report); sleep "${TKMX_REPORT_INTERVAL:-300}"; done' \
-    > "$INSTALL_DIR/run/tkmx-report.log" 2>&1 </dev/null &
+  # reporter daemon: report now, then retry FAST until the first 200, then settle to
+  # the normal interval. tkmx's server rate-limits ~3/60s/account, so 5 concurrent
+  # nodes can't all 200 at once — a short retry lets every node converge to the
+  # leaderboard within ~1-2 min instead of waiting a full 300s interval after a 429.
+  setsid bash -c '
+    while true; do
+      out="$(cd "$HOME/tkmx-client" && npm run --silent report 2>&1)"; echo "$out"
+      if echo "$out" | grep -q "responded 200"; then sleep "${TKMX_REPORT_INTERVAL:-300}"; else sleep 20; fi
+    done' > "$INSTALL_DIR/run/tkmx-report.log" 2>&1 </dev/null &
   echo $! > "$INSTALL_DIR/run/tkmx-report.pid"
   log "tkmx reporter started (client_id=mp-$NODE_NAME, reports under ${TKMX_USERNAME:-CEO})"
 else
