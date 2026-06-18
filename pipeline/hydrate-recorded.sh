@@ -26,7 +26,7 @@ cast_path(){ echo "/home/tester/recordings/${1}-hydration.cast"; }
 cmd_start(){
   local N="${1:?node}" SEED="${2:?seed url or path}" W="${REC_COLS:-120}" H="${REC_ROWS:-30}"
   local CAST; CAST="$(cast_path "$N")"
-  $DOCKER exec "$N" test -f ~/SUBSTRATE_BOOTED.json || { echo "BLOCKED_REASON=substrate_not_booted ($N)"; exit 1; }
+  $DOCKER exec "$N" bash -lc 'test -f ~/SUBSTRATE_BOOTED.json' || { echo "BLOCKED_REASON=substrate_not_booted ($N)"; exit 1; }
   $DOCKER exec "$N" bash -lc 'command -v asciinema >/dev/null' || { echo "BLOCKED_REASON=asciinema_absent"; exit 1; }
   echo "[rec] staging product seed into $N ..."
   case "$SEED" in
