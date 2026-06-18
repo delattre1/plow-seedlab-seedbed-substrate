@@ -17,6 +17,11 @@ ROOT="$(cd "$HERE/.." && pwd)"
 [ -f "$ROOT/bank/bank.env" ] && . "$ROOT/bank/bank.env"
 DOCKER="${DOCKER:-docker}"
 
+# Secure creds handoff: gitignored, host-local secret file (mode 600), out of the repo.
+DOCKERHUB_ENV="${DOCKERHUB_ENV:-$HOME/.config/seedbed/dockerhub.env}"
+# shellcheck disable=SC1090
+[ -f "$DOCKERHUB_ENV" ] && . "$DOCKERHUB_ENV"
+
 : "${DOCKERHUB_REPO:?set DOCKERHUB_REPO, e.g. plowco/seedbed-substrate (ask CEO)}"
 REMOTE_TAG="${1:-${DOCKERHUB_REPO}:latest}"
 CTR="${2:-pulled-sub-1}"

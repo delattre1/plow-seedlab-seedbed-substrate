@@ -21,6 +21,13 @@ ROOT="$(cd "$HERE/.." && pwd)"
 [ -f "$ROOT/bank/bank.env" ] && . "$ROOT/bank/bank.env"
 DOCKER="${DOCKER:-docker}"
 
+# Secure creds handoff: a GITIGNORED, host-local secret file (mode 600), placed
+# OUT of the repo. The CEO writes it; this script reads it. Never on the board,
+# the repo, or a chat. Override with DOCKERHUB_ENV.
+DOCKERHUB_ENV="${DOCKERHUB_ENV:-$HOME/.config/seedbed/dockerhub.env}"
+# shellcheck disable=SC1090
+[ -f "$DOCKERHUB_ENV" ] && . "$DOCKERHUB_ENV"
+
 : "${DOCKERHUB_USER:?set DOCKERHUB_USER (env only; never commit)}"
 : "${DOCKERHUB_TOKEN:?set DOCKERHUB_TOKEN (access token; env only; never commit)}"
 : "${DOCKERHUB_REPO:?set DOCKERHUB_REPO, e.g. plowco/seedbed-substrate (ask CEO)}"
