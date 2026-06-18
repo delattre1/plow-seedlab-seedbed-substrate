@@ -121,22 +121,31 @@ used  --release (on teardown)-------->  free   (volume preserved)
 
 ---
 
-## Verify
+## Verify — CEO ACCEPTANCE GATES (locked)
 
-Acceptance checks for the eventual build:
+The build is accepted iff all four gates pass, **each proven by a CAPTURED run** (genuine
+captured output, never claims — Rule 22). Driver: [`bin/verify-acceptance.sh`](./bin/verify-acceptance.sh)
+(gates 1–3) + [`pipeline/pull-and-run.sh`](./pipeline/pull-and-run.sh) (gate 4).
 
-- [ ] **No double-lease under concurrency:** spin **10 concurrent** containers. Prove that
-      **no two containers share a volume** (each of the 10 volumes is held by exactly one
-      container; the lease store shows 10 distinct holders).
-- [ ] **11th request with bank full:** with all 10 leased, the 11th spin-up does NOT reuse a
-      volume — it blocks or fails fast.
-- [ ] **Spin-up latency:** spin-up completes in **~5s**.
-- [ ] **Teardown preserves volume:** after teardown, the container is gone but its auth
-      volume still exists and is marked `free`.
-- [ ] **Re-lease works:** a freed volume can be leased by a new container and is still
-      authed (tokens auto-refreshed, no re-login needed).
-- [ ] **Versioning:** change the seed → rebuild → image gets a new tag; old tag still spins.
+- [ ] **Gate 1 — spin 5 → 5 SUBSTRATE_READY within 15 SECONDS.** `spin 5` brings up 5
+      substrates that each carry `~/SUBSTRATE_READY.json` within 15s. Fast because the golden
+      image is a **pre-hydrated seed snapshot** (boot only re-establishes per-node identity).
+- [ ] **Gate 2 — NO two substrates reuse the same credential/auth volume.** The atomic lease
+      (mkdir test-and-set) enforces 1-volume-1-container. Proof: `docker inspect` each
+      substrate's `~/.claude` mount → all distinct.
+- [ ] **Gate 3 — bank=10 → the 11th FAILS CLEANLY.** With 10 running (bank full), the 11th
+      `spin` fails fast (`NO_FREE_VOLUME`, no container created) — never double-leases.
+- [ ] **Gate 4 — published to Docker Hub, pullable + usable.** The golden image
+      (build → snapshot → push) can be **pulled on a clean host and run** to a working,
+      authed substrate. Pipeline: [`build-golden.sh`](./pipeline/build-golden.sh) →
+      [`push-dockerhub.sh`](./pipeline/push-dockerhub.sh) →
+      [`pull-and-run.sh`](./pipeline/pull-and-run.sh). Creds via env only — never in this repo.
+
+Supporting invariants (covered by the same flow): teardown preserves the volume (lease
+released, volume kept); a freed volume re-leases and is still authed (tokens auto-refresh);
+versioning = change seed → rebuild → re-tag.
 
 ---
 
-*Generated for CEO green-light. Do not build provisioning logic until the plan is approved.*
+*CEO green-lit the build (card 3dcee5b19212). Provisioning logic lives in `lease/`, `bin/`,
+`pipeline/`. No secrets in this public repo — creds via env only.*

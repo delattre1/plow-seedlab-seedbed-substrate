@@ -1,0 +1,15 @@
+# AUTH BANK — the pool of pre-authed Claude auth volume NAMES (N=10).
+# One Docker volume name per line. NO secrets, NO tokens — names only.
+# THE rule: each of these is leased to AT MOST ONE live container at a time.
+# Each volume is pre-authed once (OAuth device login into its own ~/.claude),
+# tokens auto-refresh, and the volume is kept across container teardowns.
+seedbed-bank-vol-01
+seedbed-bank-vol-02
+seedbed-bank-vol-03
+seedbed-bank-vol-04
+seedbed-bank-vol-05
+seedbed-bank-vol-06
+seedbed-bank-vol-07
+seedbed-bank-vol-08
+seedbed-bank-vol-09
+seedbed-bank-vol-10
