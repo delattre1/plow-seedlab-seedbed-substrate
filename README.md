@@ -61,3 +61,43 @@ SEED/
 Never commit secrets. The seeds reference secrets by **name only** (read at hydration time
 from gitignored host `.env` files); no literal token values are present. See
 `SEED/README.md` and `.gitignore`.
+
+### How the CEO's tkmx `API_KEY` reaches every spun substrate (runtime injection, never baked)
+
+The golden image is shared and spun many times — so the key is **never in the image**. It is
+injected at `docker run` time and materialised only inside each live container:
+
+1. **On the host** (`server`) the key lives in one gitignored, `chmod 600` file:
+   `~/.config/seedbed/substrate.env` →
+   ```
+   TKMX_API_KEY=<the CEO's key>      # also TKMX_USERNAME, TKMX_SERVER_URL
+   ```
+   This file is **outside the repo** and `.gitignore` blocks `substrate.env`.
+
+2. **Spin-time injection** — `bin/spin.sh` sources that file, then passes the var into the
+   container with `-e` (value never on disk in the image):
+   ```sh
+   SUBSTRATE_ENV="${SUBSTRATE_ENV:-$HOME/.config/seedbed/substrate.env}"
+   [ -f "$SUBSTRATE_ENV" ] && . "$SUBSTRATE_ENV"
+   ...
+   docker run -d ... -e TKMX_API_KEY="${TKMX_API_KEY:-}" ... "$GOLDEN_IMAGE"
+   ```
+
+3. **On boot** — `pipeline/golden-boot.sh` (the image ENTRYPOINT) reads `$TKMX_API_KEY` from
+   the env and writes the per-node reporter config, then starts the reporter:
+   ```sh
+   cat > ~/.config/tkmx/.env <<EOF
+   USERNAME=${TKMX_USERNAME:-}
+   API_KEY=${TKMX_API_KEY}
+   CLIENT_ID=mp-${NODE_NAME}     # stable, unique per node -> hostname on the leaderboard
+   ...
+   EOF
+   chmod 600 ~/.config/tkmx/.env
+   setsid bash -c 'while true; do (cd ~/tkmx-client && npm run --silent report); sleep ...; done' &
+   ```
+
+4. **Never in image/repo** — verified: the image has **no** `~/.config/tkmx/.env` baked (it's
+   written at boot), the key literal is **not found anywhere in the image fs**, and it is
+   **not in the repo** (`substrate.env` is gitignored; tracked files reference `TKMX_API_KEY`
+   by name only). The key exists only in the host's `600` file and, transiently, in each live
+   container's `600` `~/.config/tkmx/.env` (gone when the container is destroyed).
