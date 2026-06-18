@@ -12,6 +12,25 @@ that gets hydrated inside the substrate. That is a separate concern in a separat
 
 ---
 
+## 0. The SEED (the foundation — see [`SEED/`](./SEED/))
+
+The image is built **from a seed**. That seed lives in this repo at
+[`SEED/seedbed.seed.md`](./SEED/seedbed.seed.md) (companion:
+[`SEED/harden.seed.md`](./SEED/harden.seed.md)), vendored from `plow-pbc/seedlab`.
+
+`seedbed.seed.md` is **agent-driven**: an AI agent reads it and runs `## Step 0 Interview`
+→ every `## Step` in order → the agent-driven `## Verify` → `SEEDBED_RESULT=DONE`. The
+result is a node that passes the **SUBSTRATE_READY gates** (the 7/8-gate definition of "fully
+set up" — see [`README.md`](./README.md)). That ready node is what gets snapshotted as the
+golden image:
+
+```
+SEED/seedbed.seed.md  --hydrate-->  SUBSTRATE_READY node  --snapshot-->  golden IMAGE
+```
+
+The seed carries **no secret values** — only references read from gitignored host `.env`
+at hydration time (see `SEED/README.md`).
+
 ## 1. Core model: image = hydrated SEED snapshot
 
 - The **image is a snapshot of a hydrated SEED**. The seed *defines* the image.
