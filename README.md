@@ -56,6 +56,19 @@ SEED/
 .gitignore         public-repo guardrail: blocks auth tokens/volumes, QUEUE_SECRET, authkeys, creds
 ```
 
+## Terminal rendering (ttyd) — what's load-bearing
+
+ttyd renders in the **browser** (xterm.js) using the **CLIENT** machine's fonts, so installing
+fonts **inside** the container does nothing for rendering. Do **NOT** add `fonts-firacode` /
+`fonts-powerline` / etc. to the golden image — they're dead weight (audited + removed).
+
+The actual fixes for clean rendering of the Claude TUI / mypeople HUD:
+- **`-t fontFamily="Menlo, Monaco, …, monospace"`** on ttyd — a *client* hint; renders box-drawing borders cleanly.
+- **claude `TERM=xterm-256color` wrapper** — so Claude emits the real mode glyphs (`⏵⏵`/`←`) instead of ASCII `_` (it falls back under `TERM=tmux-256color`).
+- **`ttyd … tmux -u attach` + `LANG=C.UTF-8`** — so tmux *draws* those glyphs to the xterm.js client instead of substituting `_`.
+
+No tmux upgrade and no Claude update are required (both tested and ruled out).
+
 ## Secrets (PUBLIC repo)
 
 Never commit secrets. The seeds reference secrets by **name only** (read at hydration time
