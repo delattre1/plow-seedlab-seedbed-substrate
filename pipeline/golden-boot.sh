@@ -72,7 +72,12 @@ QUEUE_PORT=9900
 EOC
 
 # ---- 3. a tmux session so ttyd is attachable --------------------------------
-tmux has-session -t mc-main 2>/dev/null || tmux new-session -d -s mc-main -n Boss
+# Placeholder window is named "console" (NOT "Boss") so the central `mp spawn
+# <node>/main:Boss` can cleanly create the real Boss window with a live Boss claude.
+# A pre-existing empty window named "Boss" would collide with that spawn and leave
+# the Boss window empty (the bug). The spawn flow kills this "console" placeholder
+# once the Boss claude is up, so a ready substrate has exactly one window: Boss.
+tmux has-session -t mc-main 2>/dev/null || tmux new-session -d -s mc-main -n console
 
 # ---- 4. start daemons (self-contained: queue-client -> central, ttyd supervisor) ----
 # Started directly from the baked mypeople components so the boot does not depend
