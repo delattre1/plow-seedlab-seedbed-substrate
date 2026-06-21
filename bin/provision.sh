@@ -26,6 +26,9 @@ SUBSTRATE_ENV="${SUBSTRATE_ENV:-$HOME/.config/seedbed/substrate.env}"
 LEASE="$ROOT/lease/lease.sh"
 DOCKER="${DOCKER:-docker}"
 GOLDEN_IMAGE="${GOLDEN_IMAGE:-seedbed-golden:latest}"
+# Ensure the (possibly substrate.env-provided) bank pointer is EXPORTED so the
+# lease.sh subprocess inherits it — else it falls back to the generic placeholder bank.
+export BANK_FILE SEEDBED_LEASE_DIR GOLDEN_IMAGE DOCKER
 CLAUDE_MOUNT="${CLAUDE_MOUNT:-/home/tester/.claude}"
 READY_MARKER="${READY_MARKER:-/home/tester/SUBSTRATE_BOOTED.json}"
 N="${1:?usage: provision.sh <N> [name-prefix]}"
