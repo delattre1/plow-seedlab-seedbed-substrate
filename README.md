@@ -56,6 +56,27 @@ SEED/
 .gitignore         public-repo guardrail: blocks auth tokens/volumes, QUEUE_SECRET, authkeys, creds
 ```
 
+## Fold audit — reproducing the 5-ready-in-~16s run from zero
+
+| What the run relied on | Folded? Where |
+|---|---|
+| Fast-boot entrypoint (tailnet, central-queue JOIN, daemons, READY marker) | ✅ `pipeline/golden-boot.sh` (baked as image ENTRYPOINT) |
+| Glyph fix 1 — claude `TERM=xterm-256color` wrapper | ✅ baked by `pipeline/bake-golden.sh`; live-apply `pipeline/glyphfix.sh` |
+| Glyph fix 2 — ttyd `tmux -u attach` + `LANG=C.UTF-8` | ✅ `pipeline/golden-boot.sh` + `SEED/seedbed.seed.md` |
+| ttyd `fontFamily` (client font hint; borders) | ✅ `pipeline/golden-boot.sh` + `SEED/seedbed.seed.md` |
+| Boss-window fix — `console` placeholder + single live Boss window | ✅ `pipeline/golden-boot.sh` (placeholder) + `bin/spawn-boss.sh` (`kill-window -a`) |
+| tkmx reporting (client+agentsview+env+reporter) | ✅ `bake-golden.sh` (baked) + `golden-boot.sh` (env+start) |
+| asciinema recording (gate 7) | ✅ `bake-golden.sh` (baked) + `pipeline/hydrate-recorded.sh` |
+| Atomic lease bank (1-volume-1-container) | ✅ `lease/lease.sh`, `bank/volumes.txt` |
+| Pooled/parallel spin → ready + timing | ✅ `bin/provision.sh` (folds the ad-hoc run scripts) |
+| Reproducible golden-image build | ✅ `pipeline/bake-golden.sh` (from-base) |
+| NO container fonts (audited dead weight) | ✅ removed; `bake-golden.sh` never installs them |
+
+### ⚠️ Honest live-state caveats (NOT reproducible from this repo alone)
+- **Auth bank is live state.** The bank is 10 **pre-authed** Claude volumes on the docker host. A brand-new machine has none — they require per-volume OAuth device logins (browserauth). `bank/volumes.txt` lists names only; the authed volumes themselves are host state. Provisioning *reuses* these volumes (it does **not** do a fresh login per spin).
+- **The golden image base is a snapshot, not from-seed.** `pipeline/build-golden.sh` (from-seed) is **blocked** by upstream `mypeople` seed drift (`KeyError '3'`), so `bake-golden.sh` starts from a snapshot of a known-good node (`seedbed-golden:0.1-local`). True from-zero-from-seed needs that drift fixed (seedbed/mypeople owner).
+- **Host secrets** (`TAILSCALE_API_KEY`, `QUEUE_SECRET`, `TKMX_*`) live in gitignored host files (`~/.config/seedbed/substrate.env`); documented in `config.env.example`, injected at run — never committed.
+
 ## Terminal rendering (ttyd) — what's load-bearing
 
 ttyd renders in the **browser** (xterm.js) using the **CLIENT** machine's fonts, so installing
