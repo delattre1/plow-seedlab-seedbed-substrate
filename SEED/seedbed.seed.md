@@ -539,9 +539,22 @@ echo $! > "$INSTALL_DIR/run/queue-client.pid"
 # font stack set via -t fontFamily. Without it they fall back to a default monospace that lacks
 # the glyphs -> boxes/mojibake. Match the working local ttyd stack so the HUD + Claude TUI render clean.
 export TTYD_FONT='Menlo, Monaco, "Cascadia Mono", "Fira Code", "Courier New", monospace'
-# GLYPH FIX: `tmux -u attach` (UTF-8 client) so tmux draws the real Claude-TUI glyphs (⏵⏵/←)
-# to xterm.js instead of "_". Pair with the claude TERM=xterm-256color wrapper (Step below) so
-# claude EMITS them. (Inside tmux, claude's tmux-detection picks ASCII unless TERM is non-tmux.)
+# GLYPH FIX (claude side, layer 1): install a wrapper so claude runs with TERM=xterm-256color
+# when under tmux -> claude EMITS the real mode glyphs (⏵⏵/←) instead of ASCII "_". Under
+# TERM=tmux-256color claude's tmux-detection falls back to ASCII. $TMUX stays set so the
+# tmux-boss-hooks still route notifications. Install ONCE, before any agent spawns.
+CLAUDE_REAL="$(readlink -f "$(command -v claude)")"
+case "$CLAUDE_REAL" in */claude-wrapper) ;; *)
+  sudo tee /usr/local/bin/claude-wrapper >/dev/null <<WRAP
+#!/usr/bin/env bash
+if [ -n "\${TMUX:-}" ] && [ "\${TERM:-}" = "tmux-256color" ]; then export TERM=xterm-256color; fi
+exec "$CLAUDE_REAL" "\$@"
+WRAP
+  sudo chmod +x /usr/local/bin/claude-wrapper
+  sudo ln -sf /usr/local/bin/claude-wrapper "$(command -v claude)"
+;; esac
+# GLYPH FIX (layer 2): `tmux -u attach` (UTF-8 client) so tmux DRAWS those glyphs to xterm.js
+# instead of substituting "_" (pairs with the claude wrapper installed just above).
 setsid bash -c 'export LANG=C.UTF-8 LC_ALL=C.UTF-8; while true; do ttyd -W -a -p 7681 -t "fontFamily=$TTYD_FONT" -t fontSize=13 -t disableLeaveAlert=true tmux -u attach; echo "$(date -u +%H:%M:%S) ttyd exited rc=$? — restarting in 2s" >&2; sleep 2; done' > "$INSTALL_DIR/run/ttyd.log" 2>&1 </dev/null &
 echo $! > "$INSTALL_DIR/run/ttyd.pid"
 # tkmx token-burn reporter: post this node's Claude usage every interval. Creds
