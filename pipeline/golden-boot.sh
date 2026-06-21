@@ -84,7 +84,11 @@ echo $! > "$INSTALL_DIR/run/queue-client.pid"
 # ttyd under a supervisor (a stray kill must not blank the attach window)
 if [ -f "$INSTALL_DIR/run/ttyd.pid" ]; then kill "$(cat "$INSTALL_DIR/run/ttyd.pid")" 2>/dev/null || true; fi
 pkill -x ttyd 2>/dev/null || true
-setsid bash -c 'while true; do ttyd -W -a -p 7681 -t disableLeaveAlert=true -t fontSize=13 tmux attach; sleep 2; done' \
+# ttyd renders in the browser (xterm.js) — glyphs (box-drawing / TUI) come from the
+# CLIENT font stack, set via -t fontFamily. Match the working local ttyd so the
+# mypeople HUD + Claude TUI render clean (no boxes/mojibake).
+TTYD_FONT='Menlo, Monaco, "Cascadia Mono", "Fira Code", "Courier New", monospace'
+setsid bash -c 'while true; do ttyd -W -a -p 7681 -t "fontFamily='"$TTYD_FONT"'" -t fontSize=13 -t disableLeaveAlert=true tmux attach; sleep 2; done' \
   > "$INSTALL_DIR/run/ttyd.log" 2>&1 </dev/null &
 echo $! > "$INSTALL_DIR/run/ttyd.pid"
 # ---- 4b. tkmx token-burn reporter (REQUIRED: every substrate reports under the

@@ -535,7 +535,11 @@ echo $! > "$INSTALL_DIR/run/queue-client.pid"
 # kill / pkill must NOT blank the pane). We pid-track the supervisor (the
 # while-loop) in ttyd.pid; killing ttyd alone only triggers a respawn — to stop
 # it for real, kill the supervisor pid (the idempotent cleanup above does this).
-setsid bash -c 'while true; do ttyd -W -a -p 7681 -t disableLeaveAlert=true -t fontSize=13 tmux attach; echo "$(date -u +%H:%M:%S) ttyd exited rc=$? — restarting in 2s" >&2; sleep 2; done' > "$INSTALL_DIR/run/ttyd.log" 2>&1 </dev/null &
+# ttyd renders in the browser (xterm.js): box-drawing / Claude-TUI glyphs come from the CLIENT
+# font stack set via -t fontFamily. Without it they fall back to a default monospace that lacks
+# the glyphs -> boxes/mojibake. Match the working local ttyd stack so the HUD + Claude TUI render clean.
+TTYD_FONT='Menlo, Monaco, "Cascadia Mono", "Fira Code", "Courier New", monospace'
+setsid bash -c 'while true; do ttyd -W -a -p 7681 -t "fontFamily='"$TTYD_FONT"'" -t fontSize=13 -t disableLeaveAlert=true tmux attach; echo "$(date -u +%H:%M:%S) ttyd exited rc=$? — restarting in 2s" >&2; sleep 2; done' > "$INSTALL_DIR/run/ttyd.log" 2>&1 </dev/null &
 echo $! > "$INSTALL_DIR/run/ttyd.pid"
 # tkmx token-burn reporter: post this node's Claude usage every interval. Creds
 # live in ~/.config/tkmx/.env (chmod 600, never committed); reporter.env carries
@@ -617,7 +621,7 @@ echo "terminal recording VERIFIED: asciinema .cast ${S1}->${S2}B (growing); brow
 # recording is proven so non-UI substrate runs do not create duplicate browser artifacts.
 if [ "${SEEDBED_BROWSER_RECORDING:-0}" = "1" ]; then
   TTYD_REC_PORT="${TTYD_REC_PORT:-7726}"
-  setsid ttyd -p "$TTYD_REC_PORT" -t disableLeaveAlert=true -t fontSize=14 \
+  setsid ttyd -p "$TTYD_REC_PORT" -t 'fontFamily=Menlo, Monaco, "Cascadia Mono", "Fira Code", "Courier New", monospace' -t disableLeaveAlert=true -t fontSize=14 \
     docker exec -it "$NODE_NAME" tmux attach -rt mc-main:worker-1 >"/tmp/ttyd-rec-${NODE_NAME}.log" 2>&1 &
   echo $! >"/tmp/ttyd-rec-${NODE_NAME}.pid"
   sleep 3
