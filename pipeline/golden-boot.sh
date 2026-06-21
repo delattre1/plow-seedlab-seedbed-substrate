@@ -93,8 +93,11 @@ pkill -x ttyd 2>/dev/null || true
 # GLYPH FIX (2 of 2): ttyd attaches with `tmux -u attach` so the tmux CLIENT is UTF-8 and
 # tmux DRAWS the real glyphs (⏵⏵/←) to xterm.js instead of substituting "_". (Part 1 = the
 # claude TERM=xterm-256color wrapper baked into the image, so claude EMITS the glyphs.)
-TTYD_FONT='Menlo, Monaco, "Cascadia Mono", "Fira Code", "Courier New", monospace'
-setsid bash -c 'export LANG=C.UTF-8 LC_ALL=C.UTF-8; while true; do ttyd -W -a -p 7681 -t "fontFamily='"$TTYD_FONT"'" -t fontSize=13 -t disableLeaveAlert=true tmux -u attach; sleep 2; done' \
+# EXPORT the font (with spaces) and let the INNER bash expand it inside a single
+# quoted arg — embedding it via outer-quote splicing splits the words into separate
+# args and ttyd tries to exec "Cascadia" (execvp failed). This pattern is robust.
+export TTYD_FONT='Menlo, Monaco, "Cascadia Mono", "Fira Code", "Courier New", monospace'
+setsid bash -c 'export LANG=C.UTF-8 LC_ALL=C.UTF-8; while true; do ttyd -W -a -p 7681 -t "fontFamily=$TTYD_FONT" -t fontSize=13 -t disableLeaveAlert=true tmux -u attach; sleep 2; done' \
   > "$INSTALL_DIR/run/ttyd.log" 2>&1 </dev/null &
 echo $! > "$INSTALL_DIR/run/ttyd.pid"
 # ---- 4b. tkmx token-burn reporter (REQUIRED: every substrate reports under the
