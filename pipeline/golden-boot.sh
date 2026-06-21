@@ -20,6 +20,9 @@
 # ============================================================================
 set -uo pipefail
 NODE_NAME="${NODE_NAME:-$(hostname)}"
+# UTF-8 everywhere: the tmux server inherits this so it draws wide/TUI glyphs (⏵⏵/←)
+# to clients instead of substituting "_". (Glyph fix, part of 2; see ttyd launch below.)
+export LANG=C.UTF-8 LC_ALL=C.UTF-8
 INSTALL_DIR=/home/tester/mypeople
 TSD="$INSTALL_DIR/run/tailscale-state"
 TS_TAILNET="${TS_TAILNET:--}"
@@ -87,8 +90,11 @@ pkill -x ttyd 2>/dev/null || true
 # ttyd renders in the browser (xterm.js) — glyphs (box-drawing / TUI) come from the
 # CLIENT font stack, set via -t fontFamily. Match the working local ttyd so the
 # mypeople HUD + Claude TUI render clean (no boxes/mojibake).
+# GLYPH FIX (2 of 2): ttyd attaches with `tmux -u attach` so the tmux CLIENT is UTF-8 and
+# tmux DRAWS the real glyphs (⏵⏵/←) to xterm.js instead of substituting "_". (Part 1 = the
+# claude TERM=xterm-256color wrapper baked into the image, so claude EMITS the glyphs.)
 TTYD_FONT='Menlo, Monaco, "Cascadia Mono", "Fira Code", "Courier New", monospace'
-setsid bash -c 'while true; do ttyd -W -a -p 7681 -t "fontFamily='"$TTYD_FONT"'" -t fontSize=13 -t disableLeaveAlert=true tmux attach; sleep 2; done' \
+setsid bash -c 'export LANG=C.UTF-8 LC_ALL=C.UTF-8; while true; do ttyd -W -a -p 7681 -t "fontFamily='"$TTYD_FONT"'" -t fontSize=13 -t disableLeaveAlert=true tmux -u attach; sleep 2; done' \
   > "$INSTALL_DIR/run/ttyd.log" 2>&1 </dev/null &
 echo $! > "$INSTALL_DIR/run/ttyd.pid"
 # ---- 4b. tkmx token-burn reporter (REQUIRED: every substrate reports under the

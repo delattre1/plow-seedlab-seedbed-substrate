@@ -539,7 +539,10 @@ echo $! > "$INSTALL_DIR/run/queue-client.pid"
 # font stack set via -t fontFamily. Without it they fall back to a default monospace that lacks
 # the glyphs -> boxes/mojibake. Match the working local ttyd stack so the HUD + Claude TUI render clean.
 TTYD_FONT='Menlo, Monaco, "Cascadia Mono", "Fira Code", "Courier New", monospace'
-setsid bash -c 'while true; do ttyd -W -a -p 7681 -t "fontFamily='"$TTYD_FONT"'" -t fontSize=13 -t disableLeaveAlert=true tmux attach; echo "$(date -u +%H:%M:%S) ttyd exited rc=$? — restarting in 2s" >&2; sleep 2; done' > "$INSTALL_DIR/run/ttyd.log" 2>&1 </dev/null &
+# GLYPH FIX: `tmux -u attach` (UTF-8 client) so tmux draws the real Claude-TUI glyphs (⏵⏵/←)
+# to xterm.js instead of "_". Pair with the claude TERM=xterm-256color wrapper (Step below) so
+# claude EMITS them. (Inside tmux, claude's tmux-detection picks ASCII unless TERM is non-tmux.)
+setsid bash -c 'export LANG=C.UTF-8 LC_ALL=C.UTF-8; while true; do ttyd -W -a -p 7681 -t "fontFamily='"$TTYD_FONT"'" -t fontSize=13 -t disableLeaveAlert=true tmux -u attach; echo "$(date -u +%H:%M:%S) ttyd exited rc=$? — restarting in 2s" >&2; sleep 2; done' > "$INSTALL_DIR/run/ttyd.log" 2>&1 </dev/null &
 echo $! > "$INSTALL_DIR/run/ttyd.pid"
 # tkmx token-burn reporter: post this node's Claude usage every interval. Creds
 # live in ~/.config/tkmx/.env (chmod 600, never committed); reporter.env carries
