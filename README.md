@@ -4,8 +4,11 @@ Substrate provisioning for the seedlab: a **golden substrate image** built from 
 an **auth bank** that leases pre-authed Claude volumes so fresh substrate machines come up in
 ~5s.
 
-> **Status: PLAN + SEED only.** No provisioning logic is built yet (Rule 1 — plan first).
 > Design lives in [`PLAN.md`](./PLAN.md); the foundation seed lives in [`SEED/`](./SEED/).
+>
+> **Operating substrates (create / use / kill) → [`RUNBOOK.md`](./RUNBOOK.md)** — the three
+> commands in one place: `pipeline/bake-golden.sh` (build the golden image), `bin/provision.sh N`
+> (spin + use), `bin/teardown.sh` (kill).
 
 ## The one-line model
 
