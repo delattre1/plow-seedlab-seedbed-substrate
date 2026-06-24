@@ -3,7 +3,7 @@
 This directory holds **the substrate seed**: the agent-driven specification that, when
 **hydrated**, stands up a fully-setup substrate node. The golden image is a **snapshot of a
 node hydrated from this seed**. The seed is the source of truth; the image is its compiled
-artifact (see root `PLAN.md` §1).
+artifact (see root [`README.md`](../README.md) → *The one-line model*).
 
 ```
 SEED/seedbed.seed.md  --hydrate (agent runs it)-->  SUBSTRATE_READY node  --snapshot-->  golden IMAGE

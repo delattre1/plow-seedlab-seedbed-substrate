@@ -4,11 +4,13 @@ Substrate provisioning for the seedlab: a **golden substrate image** built from 
 an **auth bank** that leases pre-authed Claude volumes so fresh substrate machines come up in
 ~5s.
 
-> Design lives in [`PLAN.md`](./PLAN.md); the foundation seed lives in [`SEED/`](./SEED/).
+> **Two docs, that's it:**
+> - **You are here — `README.md`** = understand it (the model, the design, what "ready" means).
+> - **[`RUNBOOK.md`](./RUNBOOK.md)** = operate it (create / use / kill, + operational reference).
 >
-> **Operating substrates (create / use / kill) → [`RUNBOOK.md`](./RUNBOOK.md)** — the three
-> commands in one place: `pipeline/bake-golden.sh` (build the golden image), `bin/provision.sh N`
-> (spin + use), `bin/teardown.sh` (kill).
+> The seed itself lives in **[`SEED/`](./SEED/)**. **Scope:** this repo provisions the
+> *substrate* — the base environment + its pre-authed Claude auth. It does **NOT** build the
+> product hydrated inside it (separate repo).
 
 ## The one-line model
 
@@ -17,8 +19,46 @@ SEED/seedbed.seed.md  --hydrate-->  SUBSTRATE_READY node  --snapshot-->  golden 
 ```
 
 - **The seed defines the image.** The image is a snapshot of a node hydrated from
-  `SEED/seedbed.seed.md`. Change the seed → rebuild → re-tag (versioned). See `PLAN.md` §1.
-- **This repo's scope is the SUBSTRATE only** — not the product hydrated inside it.
+  `SEED/seedbed.seed.md`. You never hand-edit the image — you change the **seed** and rebuild.
+- **Versioned:** change the seed → rebuild → re-tag. The seed is the source of truth; the
+  image is its compiled, runnable artifact.
+
+```
+SEED (source of truth)  --hydrate-->  IMAGE (snapshot, tagged)  --spin-->  CONTAINER (live)
+        ^                                                                        |
+        |________________________ feedback (dogfood) ___________________________|
+```
+
+**Dogfood loop** — the substrate improves by being used: spin it → notice something you
+dislike → feed that back into the **seed** (not the image, not the container) → re-hydrate →
+new image → new tag. Every dislike becomes a seed change; the image is disposable, the seed
+accrues the learning.
+
+## The AUTH BANK — the one invariant everything protects
+
+A pool of **N = 10** pre-authed Claude auth **volumes**.
+
+> **THE rule: one volume is used by AT MOST ONE live container at a time.**
+
+Concurrent reuse of the same auth volume = **auth theft** → Anthropic detects the conflict and
+**logs us out**. This is the single most important property of the system; the lease exists to
+enforce it.
+
+- The bank tracks each volume as **free** or **used** (leased), with `holder` + `leased_at`.
+- On spin-up a container **atomically leases the next free volume** (mkdir test-and-set — two
+  simultaneous spins can never grab the same volume). No free volume → spin **fails fast**
+  (`NO_FREE_VOLUME`), never double-leases.
+- On teardown the lease is **released** → volume flips back to `free`. The container is
+  destroyed; **the auth volume is kept** (durable, reused across many container lifetimes).
+- **Tokens auto-refresh** inside a volume — there is no expiry logic to write. We manage only
+  *exclusive possession*, not *freshness*.
+
+```
+free  --lease (atomic test-and-set)-->  used (holder=container)
+used  --release (on teardown)-------->  free   (volume preserved)
+```
+
+Crash/orphan (a container dies without releasing) → stale-lease reclamation frees the volume.
 
 ## What "a fully-setup substrate" means — `SUBSTRATE_READY`
 
@@ -47,94 +87,39 @@ heartbeat. Any gate not truly confirmed → no marker (stale one removed) →
 **Downstream rule:** absence of `~/SUBSTRATE_READY.json` is a **HARD STOP** — do not clone,
 hydrate, or run any seed on a node that lacks the marker (`BLOCKED_REASON=substrate_not_ready`).
 
+## Acceptance gates (CEO-locked)
+
+The build is accepted iff these pass, **each proven by a CAPTURED run** (genuine captured
+output, never claims). Driver: [`bin/verify-acceptance.sh`](./bin/verify-acceptance.sh) (gates
+1–3) + [`pipeline/pull-and-run.sh`](./pipeline/pull-and-run.sh) (gate 4).
+
+1. **spin 5 → 5 `SUBSTRATE_READY` within 15s** (fast because the golden image is a pre-hydrated
+   seed snapshot; boot only re-establishes per-node identity).
+2. **No two substrates reuse the same auth volume** — atomic lease enforces 1-volume-1-container
+   (`docker inspect` each `~/.claude` mount → all distinct).
+3. **bank=10 full → the 11th spin FAILS CLEANLY** (`NO_FREE_VOLUME`, no container created).
+4. **published to Docker Hub, pullable + usable** on a clean host (creds via env only, never in
+   this repo). *Parked per CEO.*
+
 ## Layout
 
 ```
-PLAN.md            design (process): seed→image, dogfood loop, AUTH BANK, lease/lock, Verify
-README.md          this file — the one-line model + what a fully-setup substrate is
+README.md          this file — the model, the design, the SUBSTRATE_READY contract
+RUNBOOK.md         operate it: create / use / kill + operational reference (reproducibility,
+                   terminal rendering, secret injection, live-state caveats)
 SEED/
   seedbed.seed.md  THE substrate seed — the foundation the golden image is built from
   harden.seed.md   companion hardening seed
   README.md        seed provenance + secrets posture
+bin/ lease/ pipeline/ bank/   provisioning code (see RUNBOOK.md)
 .gitignore         public-repo guardrail: blocks auth tokens/volumes, QUEUE_SECRET, authkeys, creds
 ```
 
-## Fold audit — reproducing the 5-ready-in-~16s run from zero
-
-| What the run relied on | Folded? Where |
-|---|---|
-| Fast-boot entrypoint (tailnet, central-queue JOIN, daemons, READY marker) | ✅ `pipeline/golden-boot.sh` (baked as image ENTRYPOINT) |
-| Glyph fix 1 — claude `TERM=xterm-256color` wrapper | ✅ baked by `pipeline/bake-golden.sh`; live-apply `pipeline/glyphfix.sh` |
-| Glyph fix 2 — ttyd `tmux -u attach` + `LANG=C.UTF-8` | ✅ `pipeline/golden-boot.sh` + `SEED/seedbed.seed.md` |
-| ttyd `fontFamily` (client font hint; borders) | ✅ `pipeline/golden-boot.sh` + `SEED/seedbed.seed.md` |
-| Boss-window fix — `console` placeholder + single live Boss window | ✅ `pipeline/golden-boot.sh` (placeholder) + `bin/spawn-boss.sh` (`kill-window -a`) |
-| tkmx reporting (client+agentsview+env+reporter) | ✅ `bake-golden.sh` (baked) + `golden-boot.sh` (env+start) |
-| asciinema recording (gate 7) | ✅ `bake-golden.sh` (baked) + `pipeline/hydrate-recorded.sh` |
-| Atomic lease bank (1-volume-1-container) | ✅ `lease/lease.sh`, `bank/volumes.txt` |
-| Pooled/parallel spin → ready + timing | ✅ `bin/provision.sh` (folds the ad-hoc run scripts) |
-| Reproducible golden-image build | ✅ `pipeline/bake-golden.sh` (from-base) |
-| NO container fonts (audited dead weight) | ✅ removed; `bake-golden.sh` never installs them |
-
-### ⚠️ Honest live-state caveats (NOT reproducible from this repo alone)
-- **Auth bank is live state.** The bank is 10 **pre-authed** Claude volumes on the docker host. A brand-new machine has none — they require per-volume OAuth device logins (browserauth). `bank/volumes.txt` lists names only; the authed volumes themselves are host state. Provisioning *reuses* these volumes (it does **not** do a fresh login per spin).
-- **The golden image base is a snapshot, not from-seed.** `pipeline/build-golden.sh` (from-seed) is **blocked** by upstream `mypeople` seed drift (`KeyError '3'`), so `bake-golden.sh` starts from a snapshot of a known-good node (`seedbed-golden:0.1-local`). True from-zero-from-seed needs that drift fixed (seedbed/mypeople owner).
-- **Host secrets** (`TAILSCALE_API_KEY`, `QUEUE_SECRET`, `TKMX_*`) live in gitignored host files (`~/.config/seedbed/substrate.env`); documented in `config.env.example`, injected at run — never committed.
-
-## Terminal rendering (ttyd) — what's load-bearing
-
-ttyd renders in the **browser** (xterm.js) using the **CLIENT** machine's fonts, so installing
-fonts **inside** the container does nothing for rendering. Do **NOT** add `fonts-firacode` /
-`fonts-powerline` / etc. to the golden image — they're dead weight (audited + removed).
-
-The actual fixes for clean rendering of the Claude TUI / mypeople HUD:
-- **`-t fontFamily="Menlo, Monaco, …, monospace"`** on ttyd — a *client* hint; renders box-drawing borders cleanly.
-- **claude `TERM=xterm-256color` wrapper** — so Claude emits the real mode glyphs (`⏵⏵`/`←`) instead of ASCII `_` (it falls back under `TERM=tmux-256color`).
-- **`ttyd … tmux -u attach` + `LANG=C.UTF-8`** — so tmux *draws* those glyphs to the xterm.js client instead of substituting `_`.
-
-No tmux upgrade and no Claude update are required (both tested and ruled out).
-
 ## Secrets (PUBLIC repo)
 
-Never commit secrets. The seeds reference secrets by **name only** (read at hydration time
-from gitignored host `.env` files); no literal token values are present. See
-`SEED/README.md` and `.gitignore`.
-
-### How the CEO's tkmx `API_KEY` reaches every spun substrate (runtime injection, never baked)
-
-The golden image is shared and spun many times — so the key is **never in the image**. It is
-injected at `docker run` time and materialised only inside each live container:
-
-1. **On the host** (`server`) the key lives in one gitignored, `chmod 600` file:
-   `~/.config/seedbed/substrate.env` →
-   ```
-   TKMX_API_KEY=<the CEO's key>      # also TKMX_USERNAME, TKMX_SERVER_URL
-   ```
-   This file is **outside the repo** and `.gitignore` blocks `substrate.env`.
-
-2. **Spin-time injection** — `bin/spin.sh` sources that file, then passes the var into the
-   container with `-e` (value never on disk in the image):
-   ```sh
-   SUBSTRATE_ENV="${SUBSTRATE_ENV:-$HOME/.config/seedbed/substrate.env}"
-   [ -f "$SUBSTRATE_ENV" ] && . "$SUBSTRATE_ENV"
-   ...
-   docker run -d ... -e TKMX_API_KEY="${TKMX_API_KEY:-}" ... "$GOLDEN_IMAGE"
-   ```
-
-3. **On boot** — `pipeline/golden-boot.sh` (the image ENTRYPOINT) reads `$TKMX_API_KEY` from
-   the env and writes the per-node reporter config, then starts the reporter:
-   ```sh
-   cat > ~/.config/tkmx/.env <<EOF
-   USERNAME=${TKMX_USERNAME:-}
-   API_KEY=${TKMX_API_KEY}
-   CLIENT_ID=mp-${NODE_NAME}     # stable, unique per node -> hostname on the leaderboard
-   ...
-   EOF
-   chmod 600 ~/.config/tkmx/.env
-   setsid bash -c 'while true; do (cd ~/tkmx-client && npm run --silent report); sleep ...; done' &
-   ```
-
-4. **Never in image/repo** — verified: the image has **no** `~/.config/tkmx/.env` baked (it's
-   written at boot), the key literal is **not found anywhere in the image fs**, and it is
-   **not in the repo** (`substrate.env` is gitignored; tracked files reference `TKMX_API_KEY`
-   by name only). The key exists only in the host's `600` file and, transiently, in each live
-   container's `600` `~/.config/tkmx/.env` (gone when the container is destroyed).
+Never commit secrets. The seeds reference secrets by **name only** (read at hydration/spin time
+from gitignored host `.env` files); no literal token values are present. Host secrets
+(`TAILSCALE_API_KEY`, `QUEUE_SECRET`, `TKMX_*`) live in `~/.config/seedbed/substrate.env` and
+are injected at `docker run` via `-e` — never baked into the image. See
+[`SEED/README.md`](./SEED/README.md), [`config.env.example`](./config.env.example), and
+**[`RUNBOOK.md` → Secret injection](./RUNBOOK.md)** for the full mechanism + verification.
