@@ -34,6 +34,19 @@ dislike → feed that back into the **seed** (not the image, not the container) 
 new image → new tag. Every dislike becomes a seed change; the image is disposable, the seed
 accrues the learning.
 
+### The seed (`SEED/`)
+
+The image is built **from the seed** in [`SEED/`](./SEED/):
+
+| File | What it is |
+|------|-----------|
+| `seedbed.seed.md` | **The substrate seed** (~70KB / 788 lines). An AI agent reads it and: runs `## Step 0 Interview` (gather inputs) → executes every `## Step` in order → performs the agent-driven `## Verify` (reason over the running node, no pass/fail script) → prints `SEEDBED_RESULT=DONE` (or `BLOCKED_REASON=<reason>`). Produces a node that passes the `SUBSTRATE_READY` gates below. |
+| `harden.seed.md` | **Companion seed** (~14.5KB / 114 lines). Hardening pass applied to a hydrated substrate / the product hydrated inside it. |
+
+**Provenance:** vendored from the canonical source repo `plow-pbc/seedlab`; the copies here are
+the current working versions (`~/workspace/seedlab/`) as of vendoring. The seed carries **no
+secret values** — see [Secrets](#secrets-public-repo).
+
 ## The AUTH BANK — the one invariant everything protects
 
 A pool of **N = 10** pre-authed Claude auth **volumes**.
@@ -244,7 +257,6 @@ README.md          THIS FILE — the one doc: model + design + SUBSTRATE_READY c
 SEED/
   seedbed.seed.md  THE substrate seed — the foundation the golden image is built from
   harden.seed.md   companion hardening seed
-  README.md        seed provenance + secrets posture
 bin/               spin.sh, provision.sh, spawn-boss.sh, teardown.sh, verify-acceptance.sh
 lease/             lease.sh — atomic auth-volume lease (1-volume-1-container)
 pipeline/          bake-golden.sh, golden-boot.sh, glyphfix.sh, hydrate-recorded.sh, ...
@@ -255,10 +267,17 @@ config.env.example template for the gitignored host env (secrets by name only)
 
 ## Secrets (PUBLIC repo)
 
-Never commit secrets. The seeds reference secrets by **name only** (read at hydration/spin time
-from gitignored host `.env` files); no literal token values are present. Host secrets
-(`TAILSCALE_API_KEY`, `QUEUE_SECRET`, `TKMX_*`) live in `~/.config/seedbed/substrate.env` and
-are injected at `docker run` via `-e` — never baked into the image. See
-[`SEED/README.md`](./SEED/README.md), [`config.env.example`](./config.env.example), and
+Never commit secrets. **The seeds and all tracked files reference secrets by name only** (read
+at hydration/spin time from gitignored host `.env` files); no literal token values are present.
+The seed carries only variable names + runtime commands that *read* secrets from the host at
+hydration time (e.g. `grep '^QUEUE_SECRET=' ~/.config/mypeople/queue.env`). Scanned before each
+commit for literal token patterns (`tskey-auth-…`, `sk-ant-…`, `gho_…`, `AKIA…`) → **zero
+matches**; never add a real key.
+
+Host secrets live in `~/.config/seedbed/substrate.env` and are injected at `docker run` via
+`-e` — never baked into the image. Secrets consumed at hydration/spin (kept OUT of this repo):
+`QUEUE_SECRET` (central MyPeople queue), `TAILSCALE_API_KEY` (mints short-lived ephemeral
+`tskey-auth-` keys), `TKMX_API_KEY` / `TKMX_USERNAME` (CEO's token-burn leaderboard). Template:
+[`config.env.example`](./config.env.example); full mechanism + verification:
 [Secret injection](#secret-injection--how-the-ceos-tkmx-api_key-reaches-every-spun-substrate-never-baked)
-above for the full mechanism + verification.
+above.
