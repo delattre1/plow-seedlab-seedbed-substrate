@@ -31,11 +31,23 @@ LEASE="$ROOT/lease/lease.sh"
 DOCKER="${DOCKER:-docker}"
 # Runtime secrets for the boot entrypoint (gitignored, host-local; never in repo).
 SUBSTRATE_ENV="${SUBSTRATE_ENV:-$HOME/.config/seedbed/substrate.env}"
+# CALLER ENV WINS over the host-local env file: snapshot any control vars the caller
+# explicitly exported, source the file (for secrets + defaults), then restore the
+# snapshot. Without this, hard assignments in substrate.env clobber a caller's
+# GOLDEN_IMAGE (e.g. seedbed-golden:v2-bridge), BANK_FILE, SEEDBED_LEASE_DIR, etc.
+# (discordhydrate 2026-06-29). The caller no longer needs a dedicated SUBSTRATE_ENV.
+_SPIN_CTRL_VARS="GOLDEN_IMAGE BANK_FILE SEEDBED_LEASE_DIR BANK_SIZE READY_MARKER READY_TIMEOUT CLAUDE_MOUNT DOCKER SPIN_CMD"
+for _v in $_SPIN_CTRL_VARS; do eval "[ -n \"\${$_v+x}\" ] && _SPIN_SAVED_$_v=\"\${$_v}\""; done
 # shellcheck disable=SC1090
 [ -f "$SUBSTRATE_ENV" ] && . "$SUBSTRATE_ENV"
+for _v in $_SPIN_CTRL_VARS; do eval "[ -n \"\${_SPIN_SAVED_$_v+x}\" ] && $_v=\"\${_SPIN_SAVED_$_v}\""; done
 GOLDEN_IMAGE="${GOLDEN_IMAGE:-seedbed-golden:latest}"
 CLAUDE_MOUNT="${CLAUDE_MOUNT:-/home/tester/.claude}"
-READY_MARKER="${READY_MARKER:-/home/tester/SUBSTRATE_READY.json}"
+# golden-boot.sh writes ~/SUBSTRATE_BOOTED.json (READY-TO-USE gate); a from-seed
+# hydrate writes ~/SUBSTRATE_READY.json. Default to BOOTED (the golden marker) and
+# accept EITHER in wait_ready, so both pipelines work (marker mismatch fix).
+READY_MARKER="${READY_MARKER:-/home/tester/SUBSTRATE_BOOTED.json}"
+READY_MARKER_ALT="${READY_MARKER_ALT:-/home/tester/SUBSTRATE_READY.json}"
 READY_TIMEOUT="${READY_TIMEOUT:-15}"
 
 N="${1:?usage: spin.sh <N> [name-prefix]}"
@@ -77,11 +89,12 @@ spin_one(){
   fi
 }
 
-# Wait until a container has the SUBSTRATE_READY marker (or timeout).
+# Wait until a container has the readiness marker (BOOTED for a golden image, or
+# READY for a from-seed hydrate) — or timeout.
 wait_ready(){
   local ctr="$1" deadline=$(( SECONDS + READY_TIMEOUT ))
   while [ "$SECONDS" -lt "$deadline" ]; do
-    $DOCKER exec "$ctr" test -f "$READY_MARKER" 2>/dev/null && return 0
+    $DOCKER exec "$ctr" sh -c "test -f '$READY_MARKER' || test -f '$READY_MARKER_ALT'" 2>/dev/null && return 0
     sleep 0.3
   done
   return 1
