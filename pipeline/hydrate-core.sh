@@ -30,11 +30,14 @@ emit(){ echo "[hydrate-core $(printf '%(%H:%M:%S)T' -1)] $*"; }
 
 # ── 0. preconditions: node up + claude AUTHED (mounted volume, no login) ──────
 $DOCKER inspect "$NODE" >/dev/null 2>&1 || { echo "FATAL: node $NODE not found"; exit 1; }
-if ! dex 'claude auth status 2>&1 | grep -qiE "Login method|authenticated|logged in"'; then
-  echo "FATAL: claude not authed in $NODE — the leased auth volume isn't mounted at ~/.claude";
-  dex 'claude auth status 2>&1 | head' || true; exit 1
+# Prove auth by the SAME probe discordhydrate used: a trivial claude -p must return
+# non-empty (an unauthed claude errors/empties). Warn (don't hard-abort) on phrasing.
+if dex 'test -s $HOME/.claude/.credentials.json'; then emit "creds file present"; else emit "WARN: no creds file at ~/.claude"; fi
+if dex 'timeout 60 claude -p "reply with exactly: AUTH_OK" 2>/dev/null | grep -q AUTH_OK'; then
+  emit "auth OK (claude -p probe) on $NODE"
+else
+  emit "WARN: claude -p probe did not echo AUTH_OK (proceeding — discordhydrate pre-confirmed AUTH_OK)"
 fi
-emit "auth OK (mounted volume) on $NODE"
 dex 'command -v python3 >/dev/null || { echo NO_PYTHON3; exit 1; }' || { echo "FATAL: no python3 in base"; exit 1; }
 
 # ── 1. deliver the CORE seed (bootstrap: no queue yet, so docker cp — NOT the
@@ -43,31 +46,36 @@ docker cp "$SEED" "$NODE:/home/tester/mypeople.seed.md"
 dex 'sudo chown tester:tester /home/tester/mypeople.seed.md 2>/dev/null; true'
 emit "seed delivered ($(wc -l <"$SEED") lines) -> /home/tester/mypeople.seed.md"
 
-# ── 2. blind hydrate: paste-and-run in a tmux claude session (the real user flow) ─
-# Start a live blind Claude, then hand it the seed as its first turn (like a human
-# pasting). Non-interactive: standalone defaults; TS_AUTHKEY already in env.
-dex 'tmux kill-server 2>/dev/null; true'
-dex "tmux new-session -d -s hyd -n boss -x 220 -y 50 'claude --dangerously-skip-permissions'"
-for i in $(seq 1 40); do
-  dex 'tmux capture-pane -t hyd:boss -p 2>/dev/null | grep -q "bypass permissions on"' && break
-  sleep 2
-done
-dex 'tmux capture-pane -t hyd:boss -p 2>/dev/null | grep -q "bypass permissions on"' \
-  || { echo "FATAL: blind claude did not come up"; dex 'tmux capture-pane -t hyd:boss -p | tail -20'; exit 1; }
-PROMPT='Read /home/tester/mypeople.seed.md and EXECUTE it fully as the hydrating agent: run every ## Step in order to SEED_RESULT=DONE, then run its ## Verify (exit code = truth). This is a STANDALONE fresh install (no UPSTREAM queue). TS_AUTHKEY is in your environment for the headless tailscale join. Work autonomously, non-interactively (use all defaults from the Inputs table); do NOT ask me questions. Finish by printing SEED_RESULT=DONE, or BLOCKED_REASON=<short reason> if you truly cannot proceed.'
-dex "tmux send-keys -t hyd:boss -l -- $(printf '%q' "$PROMPT")"
-dex "tmux send-keys -t hyd:boss Enter"
-emit "seed handed to blind claude; driving to SEED_RESULT (timeout ${HYDRATE_TIMEOUT}s)"
+# ── 2. blind hydrate: HEADLESS claude -p (no first-run TUI: the interactive TUI blocks
+#      on the trust/onboarding dialog before the composer; claude -p auto-proceeds — same
+#      probe that returned AUTH_OK). Backgrounded in-node, streaming to a log we poll. ─
+# Pre-seed onboarding/trust flags defensively so nothing gates (harmless if already set).
+dex 'python3 - <<PY 2>/dev/null || true
+import json,os
+p=os.path.expanduser("~/.claude.json"); d={}
+try: d=json.load(open(p))
+except Exception: pass
+d["hasCompletedOnboarding"]=True; d.setdefault("theme","dark")
+d.setdefault("projects",{}).setdefault("/home/tester",{})["hasTrustDialogAccepted"]=True
+open(p,"w").write(json.dumps(d)); print("claude.json flags set")
+PY'
+PROMPT='Read /home/tester/mypeople.seed.md and EXECUTE it fully as the hydrating agent: run every ## Step in order to SEED_RESULT=DONE, then run its ## Verify (exit code = truth). This is a STANDALONE fresh install (no UPSTREAM queue). TS_AUTHKEY is in your environment for the headless tailscale join. Work autonomously, non-interactively (use all defaults from the §10 Inputs table); do NOT ask questions. Finish by printing SEED_RESULT=DONE, or BLOCKED_REASON=<short reason> if you truly cannot proceed.'
+dex "cd /home/tester && rm -f hydrate.out; nohup claude --dangerously-skip-permissions -p $(printf '%q' "$PROMPT") > /home/tester/hydrate.out 2>&1 & echo \$! > /home/tester/hydrate.pid"
+emit "seed handed to headless claude -p (pid $(dex 'cat /home/tester/hydrate.pid 2>/dev/null')); driving to SEED_RESULT (timeout ${HYDRATE_TIMEOUT}s)"
 
-# ── 3. wait for SEED_RESULT / BLOCKED_REASON (poll the pane) ──────────────────
+# ── 3. wait for SEED_RESULT / BLOCKED_REASON (poll the log + liveness) ────────
 SEED_RESULT=""; deadline=$(( $(date +%s) + HYDRATE_TIMEOUT ))
 while [ "$(date +%s)" -lt "$deadline" ]; do
-  PANE="$(dex 'tmux capture-pane -t hyd:boss -p -S -4000 2>/dev/null' || true)"
-  if echo "$PANE" | grep -qE 'SEED_RESULT=DONE'; then SEED_RESULT=DONE; break; fi
-  if echo "$PANE" | grep -qE 'BLOCKED_REASON='; then SEED_RESULT="$(echo "$PANE" | grep -oE 'BLOCKED_REASON=.*' | tail -1)"; break; fi
+  OUTLOG="$(dex 'cat /home/tester/hydrate.out 2>/dev/null' || true)"
+  if echo "$OUTLOG" | grep -qE 'SEED_RESULT=DONE'; then SEED_RESULT=DONE; break; fi
+  if echo "$OUTLOG" | grep -qE 'BLOCKED_REASON='; then SEED_RESULT="$(echo "$OUTLOG" | grep -oE 'BLOCKED_REASON=.*' | tail -1)"; break; fi
+  # if the claude -p process exited without a marker, stop waiting
+  if ! dex 'kill -0 $(cat /home/tester/hydrate.pid 2>/dev/null) 2>/dev/null'; then
+    echo "$OUTLOG" | grep -qE 'SEED_RESULT=DONE' || { SEED_RESULT="${SEED_RESULT:-PROC_EXITED_NO_MARKER}"; break; }
+  fi
   sleep 15
 done
-dex 'tmux capture-pane -t hyd:boss -p -S -20000 2>/dev/null' > "$OUTDIR/hydrate-transcript.txt" || true
+dex 'cat /home/tester/hydrate.out 2>/dev/null' > "$OUTDIR/hydrate-transcript.txt" || true
 emit "hydrate ended: ${SEED_RESULT:-TIMEOUT}"
 
 # ── 4. INDEPENDENT re-verify (Rule 15): re-run the seed's OWN generated harness ──
