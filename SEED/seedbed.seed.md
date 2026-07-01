@@ -58,7 +58,7 @@ Each independently confirmable by an agent **reasoning over the node** (not a sc
 | `NODE_NAME` | no | `mp-seedbed-1` | — | "Unique node id (container/hostname/queue HOST_ID). **MUST be a STABLE IDENTIFIER, never a STATE word.** FORBIDDEN: `clean`, `fresh`, `new`, `temp`, `test`, `wip`, `bare`, `zero` — these are states that change (the moment the node is used it's no longer 'clean'/'fresh', but the name lies). Use a stable id like `seedbed-N` / `<purpose>-seedbed-N`; track state (fresh/used/discarded) SEPARATELY, outside the name. (Boss doctrine Rule 9.)" |
 | `IMAGE` | no | `seedlab-test:latest` | `docker image inspect` (build from `~/workspace/seedlab/test-fresh` if missing) | — |
 | `SEEDBED_DIND` | no | unset/`0` | explicit env | "Set to `1` for a **docker-capable** substrate (the node runs its OWN inner `dockerd`). REQUIRED when the blind worker will hydrate a seed that itself runs Docker (e.g. a Dockerized stack like `seed-hermes-airbnb-manager`). Adds `--privileged` + a per-node `/var/lib/docker` volume (true from-zero isolation, no shared image cache, avoids overlay-on-overlay), installs docker + the compose v2 plugin in the node, adds `tester` to the `docker` group, starts `dockerd`, and arms the **8th SUBSTRATE_READY gate** (`docker compose version` + `docker run hello-world`). Default (unset) = the classic claude-only substrate, unchanged." |
-| `AUTH_VOLUME` | no | `claude-auth-<NODE_NAME>` (per-node, NOT shared) | `docker volume inspect` | — |
+| `AUTH_VOLUME` | no | `claude-auth-<NODE_NAME>` (per-node, NOT shared — this node's volume in the **Claude Auth Bank**) | `docker volume inspect` | — |
 | `CENTRAL_QUEUE_URL` | no | `http://host.docker.internal:9900` | — | "Central queue the node joins" |
 | `CENTRAL_QUEUE_SECRET` | yes | — | `grep ^QUEUE_SECRET= ~/.config/mypeople/queue.env` | — |
 | `CENTRAL_BOSS` | no | `daniels-MacBook-Pro-2/main:Boss` | the central Boss agent_id (`<host>/<sess>:<tab>`) | "Which central Boss owns this node — agents spawn with `--boss $CENTRAL_BOSS`; its pane is tmux `mc-<sess>:<tab>` on the host" |
@@ -81,7 +81,7 @@ Each independently confirmable by an agent **reasoning over the node** (not a sc
 | Component | Source | Notes |
 |---|---|---|
 | base image | `~/workspace/seedlab/test-fresh/Dockerfile` (`seedlab-test`) | node:20-bookworm-slim + Claude CLI + tmux + sudo, runs as non-root `tester` |
-| Claude auth | **per-node** Docker volume `claude-auth-<NODE_NAME>` | Max-subscription OAuth device login, **once per node**, cached in that node's OWN volume (see Step 2). Never an API key; never shared across nodes. |
+| Claude auth (the **Claude Auth Bank**) | **per-node** Docker volume `claude-auth-<NODE_NAME>` | Max-subscription OAuth device login, **once per node**, cached in that node's OWN volume (see Step 2). Never an API key; never shared across nodes. The pool of these `claude-auth-<id>` volumes — each one a completed Max-sub login, leased atomically, never re-authed — is collectively the **Claude Auth Bank**. |
 | Tailscale API key | `~/workspace/seedlab/.env` → `TAILSCALE_API_KEY` | mints short-lived auth keys via the Tailscale API |
 | MyPeople runtime | `mypeople.seed.md` (fetched fresh) | hydrated INSIDE the container (Step 6) |
 | central queue | the host's running `queue-server.py` on `:9900` | the node joins this; Boss drives agents through it |
@@ -129,7 +129,7 @@ docker image inspect "$IMAGE" >/dev/null 2>&1 || docker build -q -t "$IMAGE" "$H
 
 ### 2. Per-node Claude auth — ONE-TIME device login, in THIS node's OWN volume
 
-Claude runs on the CEO's **Max subscription** via OAuth device login — **never an API key**. Each node authenticates **once, into its own volume `claude-auth-<NODE_NAME>`**, and reuses it across that node's restarts. Volumes are **never shared between nodes** — sharing one volume across concurrently-running nodes makes their Claude processes rotate each other's refresh tokens and breaks auth; per-node volumes eliminate that entirely.
+Claude runs on the CEO's **Max subscription** via OAuth device login — **never an API key**. Each node authenticates **once, into its own volume `claude-auth-<NODE_NAME>`**, and reuses it across that node's restarts. Volumes are **never shared between nodes** — sharing one volume across concurrently-running nodes makes their Claude processes rotate each other's refresh tokens and breaks auth; per-node volumes eliminate that entirely. The pool of these `claude-auth-<id>` volumes — each one a completed Max-subscription login, leased atomically (one volume per node), and **never re-authed** — is collectively the **Claude Auth Bank**.
 
 **Capture `claude auth status` to a variable** (do NOT `| grep -q` it under `pipefail` — `grep -q` closes the pipe on the first line and SIGPIPEs claude into a non-zero exit, falsely reading "unauthed").
 
