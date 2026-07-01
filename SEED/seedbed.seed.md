@@ -58,7 +58,7 @@ Each independently confirmable by an agent **reasoning over the node** (not a sc
 | `NODE_NAME` | no | `mp-seedbed-1` | — | "Unique node id (container/hostname/queue HOST_ID). **MUST be a STABLE IDENTIFIER, never a STATE word.** FORBIDDEN: `clean`, `fresh`, `new`, `temp`, `test`, `wip`, `bare`, `zero` — these are states that change (the moment the node is used it's no longer 'clean'/'fresh', but the name lies). Use a stable id like `seedbed-N` / `<purpose>-seedbed-N`; track state (fresh/used/discarded) SEPARATELY, outside the name. (Boss doctrine Rule 9.)" |
 | `IMAGE` | no | `seedlab-test:latest` | `docker image inspect` (build from `~/workspace/seedlab/test-fresh` if missing) | — |
 | `SEEDBED_DIND` | no | unset/`0` | explicit env | "Set to `1` for a **docker-capable** substrate (the node runs its OWN inner `dockerd`). REQUIRED when the blind worker will hydrate a seed that itself runs Docker (e.g. a Dockerized stack like `seed-hermes-airbnb-manager`). Adds `--privileged` + a per-node `/var/lib/docker` volume (true from-zero isolation, no shared image cache, avoids overlay-on-overlay), installs docker + the compose v2 plugin in the node, adds `tester` to the `docker` group, starts `dockerd`, and arms the **8th SUBSTRATE_READY gate** (`docker compose version` + `docker run hello-world`). Default (unset) = the classic claude-only substrate, unchanged." |
-| `AUTH_VOLUME` | no | `claude-auth-<NODE_NAME>` (per-node, NOT shared — this node's volume in the **Claude Auth Bank**) | `docker volume inspect` | — |
+| `AUTH_VOLUME` | no | `claude-auth-<NODE_NAME>` (per-node, NOT shared — this node's volume in the **Claude Auth Bank**; at spin time this is a leased `claude-auth-bank-NN` from the canonical bank — see "Claude Auth Bank — canonical source of truth" below) | `docker volume inspect` | — |
 | `CENTRAL_QUEUE_URL` | no | `http://host.docker.internal:9900` | — | "Central queue the node joins" |
 | `CENTRAL_QUEUE_SECRET` | yes | — | `grep ^QUEUE_SECRET= ~/.config/mypeople/queue.env` | — |
 | `CENTRAL_BOSS` | no | `daniels-MacBook-Pro-2/main:Boss` | the central Boss agent_id (`<host>/<sess>:<tab>`) | "Which central Boss owns this node — agents spawn with `--boss $CENTRAL_BOSS`; its pane is tmux `mc-<sess>:<tab>` on the host" |
@@ -87,6 +87,17 @@ Each independently confirmable by an agent **reasoning over the node** (not a sc
 | central queue | the host's running `queue-server.py` on `:9900` | the node joins this; Boss drives agents through it |
 | tkmx reporter | `https://github.com/srosro/tkmx-client` (latest `main`) + `agentsview` (hard dep) | installed INSIDE the node (Step 6.6); reports THIS node's Claude token burn to the leaderboard. Reads the node's `~/.claude` via agentsview — no interception, just transcript usage. |
 | tkmx API key | `~/workspace/seedlab/.env` → `TKMX_API_KEY` (gitignored) | the CEO's **existing** leaderboard key (sourced once from the host install). Reused, **never committed, never baked into the image**, injected via `docker exec -e`. |
+
+### Claude Auth Bank — canonical source of truth (ONE bank; do NOT fork)
+
+The Auth Bank has exactly **one** naming convention, **one** manifest, and **one** lease dir. All per-workstream copies are retired — an agent must find exactly one of each, at these declared locations:
+
+- **Volume-name convention:** `claude-auth-bank-NN` — literal prefix `claude-auth-bank-`, `NN` zero-padded to 2 digits, numbered `01`–`10` (N=10). Canonical set: `claude-auth-bank-01` … `claude-auth-bank-10`. (The ad-hoc per-node form `claude-auth-<NODE_NAME>` is the legacy/standalone fallback; the canonical **bank** uses the numbered names above.)
+- **Canonical manifest — the ONLY one:** `bank/volumes.txt` in this repo (abs `/Users/delattre/workspace/plow-seedlab-seedbed-substrate/bank/volumes.txt`). Names-only, version-controlled, host-portable. Retired / do-NOT-use: `bridge-bank.txt`, `core-bank.txt`, `cto-bank.txt`, `authed-bank.txt`, `claude-auth-bank-10.txt`, or any other per-workstream manifest.
+- **Canonical lease dir — the ONLY one:** `~/.config/seedbed/leases-bank` (abs `/Users/delattre/.config/seedbed/leases-bank`). Host-local atomic `mkdir` lock dirs on the coordinator that RUNS `lease.sh`/`spin.sh` (today `daniels-MacBook-Pro-2`, user `delattre`). Retired / do-NOT-use: `leases-bridge`, `leases-core`, `~/.seedbed-bank/leases-mpctofull`, and the old default `/run/seedbed-bank/leases`.
+  - **Why the Mac path, not `/run/seedbed-bank/leases`:** the lock dirs must live on the machine that runs the spin. `DOCKER_HOST=ssh://server` routes the *containers* to the server while the lock files stay local to the Mac; `/run/seedbed-bank/leases` is a server path not writable from the Mac (the CEO hit exactly this). If spins ever move to run ON the server, repoint the lease dir to a server path then.
+
+*Coordinated with `discordhydrate:eng-1` (building the fresh 10-volume bank, 2026-07-01); `bank/volumes.txt` contents are being repointed to the 10 `claude-auth-bank-NN` names in that rebuild.*
 
 ## Steps
 
