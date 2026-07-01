@@ -65,13 +65,17 @@ emit "seed handed to headless claude -p (pid $(dex 'cat /home/tester/hydrate.pid
 
 # ── 3. wait for SEED_RESULT / BLOCKED_REASON (poll the log + liveness) ────────
 SEED_RESULT=""; deadline=$(( $(date +%s) + HYDRATE_TIMEOUT ))
+# Marker detection order matters: a genuine BLOCKED run's prose can contain the phrase
+# "SEED_RESULT=DONE" (e.g. "could not proceed to SEED_RESULT=DONE"), so check for a REAL
+# BLOCKED_REASON=<token> FIRST; only then accept DONE.
 while [ "$(date +%s)" -lt "$deadline" ]; do
   OUTLOG="$(dex 'cat /home/tester/hydrate.out 2>/dev/null' || true)"
-  if echo "$OUTLOG" | grep -qE 'SEED_RESULT=DONE'; then SEED_RESULT=DONE; break; fi
-  if echo "$OUTLOG" | grep -qE 'BLOCKED_REASON='; then SEED_RESULT="$(echo "$OUTLOG" | grep -oE 'BLOCKED_REASON=.*' | tail -1)"; break; fi
-  # if the claude -p process exited without a marker, stop waiting
+  BR="$(echo "$OUTLOG" | grep -oE 'BLOCKED_REASON=[A-Za-z0-9_.:-]+' | tail -1)"
+  if [ -n "$BR" ]; then SEED_RESULT="$BR"; break; fi
+  if echo "$OUTLOG" | grep -qE '(^|[^A-Za-z=])SEED_RESULT=DONE([^A-Za-z]|$)' \
+     && ! echo "$OUTLOG" | grep -qiE 'could not|cannot|unable|proceed to SEED_RESULT'; then SEED_RESULT=DONE; break; fi
   if ! dex 'kill -0 $(cat /home/tester/hydrate.pid 2>/dev/null) 2>/dev/null'; then
-    echo "$OUTLOG" | grep -qE 'SEED_RESULT=DONE' || { SEED_RESULT="${SEED_RESULT:-PROC_EXITED_NO_MARKER}"; break; }
+    SEED_RESULT="${SEED_RESULT:-PROC_EXITED_NO_MARKER}"; break
   fi
   sleep 15
 done
