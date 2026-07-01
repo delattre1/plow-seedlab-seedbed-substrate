@@ -597,6 +597,8 @@ Per the recorder mandate, every seedbed's worker pane is recorded for its entire
 - **browser opt-in (`seedrec`)** — host-side Chrome+ttyd -> `.webm`, enabled only when
   `SEEDBED_BROWSER_RECORDING=1` because the seedbed/test is explicitly exercising UI/browser
   behavior. Non-UI substrate runs MUST NOT start this duplicate browser recorder by default.
+  <!-- seedrec canonical repo: delattre1/plow-seedlab-broll-terminal-and-browser (browser/seedrec/); clone at $HOME/workspace/plow-seedlab-broll-terminal-and-browser -->
+
 
 **The tmux geometry rule.** Recorder clients attach READ-ONLY to `mc-main:worker-1`. Set
 `window-size largest` and `aggressive-resize off` so incidental smaller attach clients cannot shrink
@@ -652,10 +654,10 @@ if [ "${SEEDBED_BROWSER_RECORDING:-0}" = "1" ]; then
     docker exec -it "$NODE_NAME" tmux attach -rt mc-main:worker-1 >"/tmp/ttyd-rec-${NODE_NAME}.log" 2>&1 &
   echo $! >"/tmp/ttyd-rec-${NODE_NAME}.pid"
   sleep 3
-  SEEDREC_ROTATE_MS="${SEEDREC_ROTATE_MS:-30000}" node "$HOME/workspace/seedlab/seedrec/seedrec.mjs" start "${NODE_NAME}-browser" \
+  SEEDREC_ROTATE_MS="${SEEDREC_ROTATE_MS:-30000}" node "$HOME/workspace/plow-seedlab-broll-terminal-and-browser/browser/seedrec/seedrec.mjs" start "${NODE_NAME}-browser" \
     --url "http://localhost:${TTYD_REC_PORT}/" --width 854 --height 480
   sleep 6
-  node "$HOME/workspace/seedlab/seedrec/seedrec.mjs" status "${NODE_NAME}-browser" | grep -q RECORDING \
+  node "$HOME/workspace/plow-seedlab-broll-terminal-and-browser/browser/seedrec/seedrec.mjs" status "${NODE_NAME}-browser" | grep -q RECORDING \
     || { echo "BLOCKED_REASON=browser_seedrec_not_recording"; exit 1; }
   echo "browser recording ENABLED intentionally: ${NODE_NAME}-browser on :${TTYD_REC_PORT}"
 fi
@@ -802,7 +804,7 @@ docker exec "$NODE_NAME" tmux kill-session -t rec 2>/dev/null || true   # stops 
 docker exec "$NODE_NAME" bash -lc "cat ~/recordings/${NODE_NAME}.cast" > "$HOME/${NODE_NAME}.cast" 2>/dev/null
 "$HOME/workspace/seedlab/recorder/render_clip.sh" "$HOME/${NODE_NAME}.cast" "$HOME/${NODE_NAME}-install.mp4"  # needs agg+ffmpeg+fonts
 [ -d "$HOME/workspace/seedlab/recordings/${NODE_NAME}-browser" ] \
-  && node "$HOME/workspace/seedlab/seedrec/seedrec.mjs" stop "${NODE_NAME}-browser" --reason approved-retire --mp4 \
+  && node "$HOME/workspace/plow-seedlab-broll-terminal-and-browser/browser/seedrec/seedrec.mjs" stop "${NODE_NAME}-browser" --reason approved-retire --mp4 \
   || true
 [ -f "/tmp/ttyd-rec-${NODE_NAME}.pid" ] && kill "$(cat "/tmp/ttyd-rec-${NODE_NAME}.pid")" 2>/dev/null || true
 mp kill "$NODE_NAME/val:probe" 2>/dev/null || true
