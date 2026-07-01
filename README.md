@@ -49,7 +49,7 @@ secret values** — see [Secrets](#secrets-public-repo).
 
 ## The AUTH BANK — the one invariant everything protects
 
-> **New engineer? Start with [`docs/CLAUDE-AUTH-BANK.md`](docs/CLAUDE-AUTH-BANK.md)** — the onboarding walkthrough (what it is, the browserauth login flow, leasing, the canonical manifest + lease dir, the status dashboard, and what NOT to do).
+> **New engineer? Start with [`docs/AUTH-BANK-ONBOARDING.md`](docs/AUTH-BANK-ONBOARDING.md)** — the onboarding walkthrough (what it is, the browserauth login flow, leasing, the canonical manifest + lease dir, the status dashboard, and what NOT to do).
 
 A pool of **N = 10** pre-authed Claude auth **volumes**.
 
