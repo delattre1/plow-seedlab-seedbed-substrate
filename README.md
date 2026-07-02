@@ -262,13 +262,31 @@ README.md          THIS FILE — the one doc: model + design + SUBSTRATE_READY c
 SEED/
   seedbed.seed.md  THE substrate seed — the foundation the golden image is built from
   harden.seed.md   companion hardening seed
-bin/               spin.sh, provision.sh, spawn-boss.sh, teardown.sh, verify-acceptance.sh
+bin/               spin.sh, provision.sh, spawn-boss.sh, teardown.sh, verify-acceptance.sh,
+                   reap-dead-leases.sh (hourly cron — release leases whose holder is gone)
 lease/             lease.sh — atomic auth-volume lease (1-volume-1-container)
 pipeline/          bake-golden.sh, golden-boot.sh, glyphfix.sh, hydrate-recorded.sh, ...
 bank/              volumes.txt — the auth bank roster (names only)
 config.env.example template for the gitignored host env (secrets by name only)
 .gitignore         public-repo guardrail: blocks auth tokens/volumes, QUEUE_SECRET, authkeys, creds
 ```
+
+## Known gaps (flagged proposals — not yet fixed)
+
+- **Two-bank drift (auth-bank owner's call).** Spins currently lease from the host-local
+  `bank.real.txt` (via `~/.config/seedbed/substrate.env`'s `BANK_FILE`/`SEEDBED_LEASE_DIR`),
+  while the seed declares **`bank/volumes.txt` (`claude-auth-bank-NN`)** as the ONE canonical
+  bank. So the canonical bank can read 10/10 free while the bank actually in use leaks. **Fix
+  (do NOT do blindly):** point `substrate.env` `BANK_FILE`/`SEEDBED_LEASE_DIR` at the canonical
+  bank + its lease dir (`~/.config/seedbed/leases-bank`) — but only **once the canonical
+  `claude-auth-bank-NN` volumes are pre-authed**, which is the auth-bank owner's step, not a
+  config flip. Until then the two banks stay divergent by necessity.
+- **Leaked leases → reaped hourly.** A container that dies **without** `teardown.sh` (crash,
+  reboot, `docker rm`) used to leak its lease forever (we found 9 week-old leaks on 2026-07-02).
+  `bin/reap-dead-leases.sh` closes this: for each lease it releases **only** when
+  `docker inspect <holder>` fails (container truly gone) — never a live/stopped holder; volumes
+  are always kept. Wired as an hourly server cron. `teardown.sh` remains the clean-exit path;
+  the reaper is the safety net for the un-clean ones.
 
 ## Secrets (PUBLIC repo)
 
