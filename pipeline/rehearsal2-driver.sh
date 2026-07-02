@@ -104,13 +104,17 @@ dex 'sudo apt-get -qq update >/dev/null 2>&1; sudo apt-get -qq install -y asciin
 # false-match the prompt echo (rehearsal #2a bug). The agent writes a file; the driver polls it.
 dex 'rm -f /home/tester/hydrate.done 2>/dev/null; true'
 PROMPT='Read /home/tester/mypeople.seed.md and EXECUTE it fully as the hydrating agent: run every ## Step to completion, then run its ## Verify. STANDALONE fresh install (no UPSTREAM). TS_AUTHKEY is in your env for the tailnet join. Work autonomously, non-interactively (all §10 defaults); do NOT ask questions. MANDATORY FINAL ACTION: when the seed is fully hydrated and its Verify passes, run exactly: printf DONE > /home/tester/hydrate.done ; if you truly cannot proceed, run exactly: printf "BLOCKED:<short reason>" > /home/tester/hydrate.done   (this marker FILE is how completion is detected — do not skip it).'
-# claude runs in a tmux pane; asciinema records that pane -> live markers + the cast in one.
-dex "tmux kill-server 2>/dev/null; tmux new-session -d -s hyd -n boss -x 220 -y 50 'claude --dangerously-skip-permissions'"
-for i in $(seq 1 45); do dex 'tmux capture-pane -t hyd:boss -p 2>/dev/null | grep -q "bypass permissions on"' && break; sleep 2; done
-dex 'tmux capture-pane -t hyd:boss -p 2>/dev/null | grep -q "bypass permissions on"' || { fail_out hydrate "blind claude did not reach composer"; docker cp "$NODE:/home/tester/recordings/." "$OUTDIR/" 2>/dev/null||true; teardown; post_card "REHEARSAL #2 BLOCKED: in-node claude did not reach composer. manual kicks needed: 1."; exit 1; }
-dex "tmux new-session -d -s rec 'asciinema rec --quiet --overwrite -c \"TMUX= tmux attach -rt hyd:boss\" ~/recordings/${NODE}.cast'"
+# claude runs in a tmux pane on a DEDICATED socket ($HYDSOCK) — ISOLATED from the seed's
+# own tmux (mp uses its own socket, and its install may `tmux kill-server`): a shared socket
+# let the seed kill the hydrating agent's pane mid-build ("pane died before 7/7", #2c). H3: the
+# pane is asciinema-recorded (live markers + cast).
+HYDSOCK="hyddrv"
+dex "tmux -L $HYDSOCK kill-server 2>/dev/null; tmux -L $HYDSOCK new-session -d -s hyd -n boss -x 220 -y 50 'claude --dangerously-skip-permissions'"
+for i in $(seq 1 45); do dex "tmux -L $HYDSOCK capture-pane -t hyd:boss -p 2>/dev/null | grep -q 'bypass permissions on'" && break; sleep 2; done
+dex "tmux -L $HYDSOCK capture-pane -t hyd:boss -p 2>/dev/null | grep -q 'bypass permissions on'" || { fail_out hydrate "blind claude did not reach composer"; docker cp "$NODE:/home/tester/recordings/." "$OUTDIR/" 2>/dev/null||true; teardown; post_card "REHEARSAL #2 BLOCKED: in-node claude did not reach composer. manual kicks needed: 1."; exit 1; }
+dex "tmux -L $HYDSOCK new-session -d -s rec 'asciinema rec --quiet --overwrite -c \"TMUX= tmux -L $HYDSOCK attach -rt hyd:boss\" ~/recordings/${NODE}.cast'"
 sleep 2
-dex "tmux send-keys -t hyd:boss -l -- $(printf '%q' "$PROMPT")"; dex "tmux send-keys -t hyd:boss Enter"
+dex "tmux -L $HYDSOCK send-keys -t hyd:boss -l -- $(printf '%q' "$PROMPT")"; dex "tmux -L $HYDSOCK send-keys -t hyd:boss Enter"
 TSD=/home/tester/mypeople/run/tailscale-state; THYD=$(date +%s)
 say "seed handed to recorded blind claude pane; polling the 7-gate for completion (H-DONE = 7/7, not the marker)"
 
@@ -140,12 +144,13 @@ STAGE=drive
 deadline=$(( $(date +%s) + 3600 ))
 GATES=""; PASSN="0/7"; TREADY=""
 while [ "$(date +%s)" -lt "$deadline" ]; do
-  dex 'tmux capture-pane -t hyd:boss -p 2>/dev/null | grep -q "How is Claude doing this session"' && { dex 'tmux send-keys -t hyd:boss 0' 2>/dev/null; say "H4: dismissed in-node feedback dialog"; }
+  dex "tmux -L $HYDSOCK capture-pane -t hyd:boss -p 2>/dev/null | grep -q 'How is Claude doing this session'" && { dex "tmux -L $HYDSOCK send-keys -t hyd:boss 0" 2>/dev/null; say "H4: dismissed in-node feedback dialog"; }
   GATES="$(run_gates)"; PASSN="$(echo "$GATES"|grep -oE 'GATES_PASSED=[0-9]+/7'|cut -d= -f2)"
-  say "…gate poll: $PASSN | bin=$(dex 'ls ~/mypeople/bin 2>/dev/null|wc -l') daemons=$(dex 'pgrep -c -f "queue-server|todo-server|queue-client" 2>/dev/null')"
+  say "…gate poll: $PASSN | bin=$(dex 'ls ~/mypeople/bin 2>/dev/null|wc -l') daemons=$(dex 'pgrep -c -f "queue-server|todo-server|queue-client" 2>/dev/null') pane=$(dex "tmux -L $HYDSOCK has-session -t hyd 2>/dev/null && echo up || echo DOWN")"
   if [ "$PASSN" = "7/7" ]; then TREADY=$(( $(date +%s) - THYD )); SEED_RESULT="READY_7of7"; say "SUCCESS: 7/7 SUBSTRATE_READY at ${TREADY}s"; break; fi
   MK="$(dex 'cat /home/tester/hydrate.done 2>/dev/null' || true)"; case "$MK" in BLOCKED*) SEED_RESULT="$MK"; say "agent BLOCKED: $MK"; break;; esac
-  dex 'tmux has-session -t hyd 2>/dev/null' || { SEED_RESULT="PANE_DIED"; say "pane died before 7/7"; break; }
+  # pane death no longer aborts immediately — the runtime daemons persist independently; keep polling gates
+  dex "tmux -L $HYDSOCK has-session -t hyd 2>/dev/null" || say "note: hyd pane gone (agent turn ended) — daemons persist; continuing to poll gates"
   sleep 40
 done
 echo "$GATES"; GATETBL="$GATES"
