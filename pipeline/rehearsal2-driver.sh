@@ -154,8 +154,8 @@ while [ "$(date +%s)" -lt "$deadline" ]; do
   sleep 40
 done
 echo "$GATES"; GATETBL="$GATES"
-[ -n "$TREADY" ] || TREADY=$(( $(date +%s) - THYD ))
-say "hydrate-to-7/7 duration: ${TREADY}s (~$((TREADY/60))m)"
+ELAPSED=$(( $(date +%s) - THYD ))
+if [ "$PASSN" = "7/7" ]; then say "hydrate→7/7 duration: ${TREADY}s (~$((TREADY/60))m)"; DURLINE="HYDRATE DURATION (hydrate-start→7/7 SUBSTRATE_READY, hands-off): ${TREADY}s (~$((TREADY/60))m) — MEASURED, hard fact."; else say "STOPPED at $PASSN after ${ELAPSED}s (did NOT reach 7/7)"; DURLINE="STOPPED at $PASSN after ${ELAPSED}s (~$((ELAPSED/60))m) — did NOT reach 7/7 (no spin→7/7 duration to claim)."; fi
 
 # --- 7. seedrec BROWSER recording of the live HUD (once 7/7) ------------------
 STAGE=browser
@@ -187,7 +187,7 @@ if [ -n "$WEBM" ]; then HY=$(python3 -c 'import secrets;print(secrets.token_hex(
 say "VERDICT=$VERDICT gates=$PASSN kicks=$KICKS ready=${TREADY}s cast=$CASTPROOF webm=$WEBMPROOF"
 post_card "REHEARSAL #2 (final driver) — FULLY HANDS-OFF (node $NODE, disposable, self-spun→self-torn-down).
 RESULT: $VERDICT · manual kicks needed: $KICKS
-HYDRATE DURATION (spin→7/7 SUBSTRATE_READY, hands-off): ${TREADY}s (~$((TREADY/60))m) — MEASURED, hard fact.
+$DURLINE
 SUBSTRATE_READY 7-gate:
 $GATES
 COMPLETION = 7/7 gates (H-DONE applied to detection): the driver polls the gate and declares success the instant it's 7/7 — no longer waits on the lagging seed marker (fixes the TIMEOUT-while-7/7 semantics).
