@@ -1,5 +1,7 @@
 # plow-seedlab-seedbed-substrate
 
+> **New engineer? Start here: [`docs/SEED-DOCTRINE-ONBOARDING.md`](docs/SEED-DOCTRINE-ONBOARDING.md)** — the single onboarding page for creating & validating SEEDs (the 3 pillars, CREATE==VALIDATE, the harden loop, the auth bank + substrate spawn), with every link resolving on GitHub.
+
 Substrate provisioning for the seedlab: a **golden substrate image** built from a seed, plus
 an **auth bank** that leases pre-authed Claude volumes so fresh substrate machines come up in
 ~5s.
