@@ -49,6 +49,8 @@ Repeat up to `MAX_ITERS`:
 
 ### A. FULL CLEAN SLATE (before every iteration — including the first)
 
+🔴 **H-NEW — FLUSH ALL RECORDINGS OFF-NODE *BEFORE* ANY TEARDOWN (2026-07-02 rehearsal, HARD).** `docker rm` destroys the node's `~/recordings/*.cast` AND any in-node browser `seedrec` artifact with it. Before wiping (here, and in a production run's own teardown) you MUST first pull every recording off-node — `docker cp "$NODE:/home/tester/recordings/." "$OUTDIR/"` for the terminal cast, and pull/confirm the browser `.webm` — and confirm the files exist host-side. Only then wipe. A run that `rm`s the node before flushing has irretrievably lost its proof (the whole point of recording). This is a precondition of the wipe below, not an afterthought.
+
 Destroy **all** `STATE_TO_WIPE`. Nothing carries over. For a `seedbed.seed.md` target:
 ```bash
 NODE="${NODE_NAME:-harden-probe-1}"          # use a dedicated name so it's unambiguous to wipe
@@ -63,6 +65,11 @@ Verify the slate is clean before proceeding: no target container, **no auth volu
 ### B. BLIND HYDRATE + DRIVE TO THE END (fresh in-container worker)
 
 Spawn a NEW clean-context agent **inside the fresh node** and deliver the seed to it **DIRECTLY over the central queue** (`mp send`) — NEVER `docker exec` the seed in from outside, NEVER a second "bridge" agent between you and the worker (see "## Forbids"). Give it **only**: the `TARGET_SEED` path, the `NODE_NAME`, and "install/hydrate this seed and drive it to the END, then run its `## Verify` exactly; report the verdict with evidence." Nothing else (blind inputs). If it hits a problem mid-install, it FIXES it in-container so the install completes and records **exactly what was wrong + exactly how it fixed it** — that feedback is the iteration's product. It must surface any human step the target itself defines (e.g. a one-time device login) — that's the target's own declared human touch, not a hint.
+
+🔴 **DRIVER REQUIREMENTS (2026-07-02 rehearsal — the harness must not blind or stall itself):**
+- **H3 — LIVE progress, never a buffered black box.** Do NOT drive the worker via headless `claude -p` (it buffers ALL output → no live `SEED_RESULT`/`BLOCKED_REASON`, no progress; a whole run judged only by poking the node filesystem). Drive it so markers stream: `mp send` into a live worker whose pane is terminal-recorded, OR `claude --output-format stream-json`. The coordinator must see `SEED_RESULT`/`BLOCKED_REASON` the moment it happens.
+- **H4 — auto-dismiss the Claude session-feedback dialog.** A fresh claude can raise a session-feedback modal that stalls the driver until dismissed. The keepalive MUST auto-dismiss it (reference mechanism: `~/workspace/claude-feedback-autodismiss.sh`). Never let a dialog silently pause the run.
+- **H5 — the driver MUST heartbeat.** Never park on a long background wait with no active monitor: run a watcher that peeks progress on an interval, posts interim status, and auto-reports `SEED_RESULT`/`BLOCKED_REASON` on completion (or flags a stall if the pane is quiet too long). Going idle mid-hydrate without an interim report is a driver failure, not "waiting." (Reference: `~/workspace/rehearsal-driver-heartbeat.sh`.)
 
 ### C. AGENT-DRIVEN VERIFY (same worker, target's own Verify)
 

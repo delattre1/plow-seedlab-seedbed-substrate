@@ -247,6 +247,8 @@ TS_AUTHKEY="$(curl -fsS -u "${TAILSCALE_API_KEY}:" -X POST \
 case "$TS_AUTHKEY" in tskey-auth-*) : ;; *) echo "BLOCKED_REASON=tailscale_mint_failed"; exit 1;; esac
 ```
 
+🔴 **H1 — IN-NODE MINT NEEDS A DNS RESET (2026-07-02 rehearsal, root cause of `no_ts_authkey`).** This Step mints **host-side** (the host resolves `api.tailscale.com`) and injects `TS_AUTHKEY`, so it is safe. But any path that mints the authkey **inside a fresh node** (a from-seed hydrate on a bare `inner-base:clean`, or `golden-boot.sh`'s boot mint) MUST **first reset the node's DNS to public resolvers** or the in-node `curl https://api.tailscale.com` cannot resolve and the mint fails with `BLOCKED_REASON=no_ts_authkey` (the node's baked `/etc/resolv.conf` points at a netns stub that only allows the control-plane + pkgs hosts, not the admin API). Reference the reset that already works: `golden-boot.sh:36-48` (`printf 'nameserver 1.1.1.1\nnameserver 8.8.8.8\n' > /etc/resolv.conf` before the mint). The from-seed spin MUST apply this reset before any in-node mint. (A bare-base run that skipped it is exactly how the first rehearsal blocked; the second, DNS-correct, minted + joined fine.)
+
 ### 4. Launch a fresh container
 
 `NET_ADMIN` + `/dev/net/tun` are required so `tailscaled` can run inside; the port-map is a fallback attach path if the tailnet join ever fails.
@@ -338,6 +340,8 @@ echo "tailnet IP: $IP"
 '
 CONTAINER_TS_IP="$(docker exec "$NODE_NAME" bash -lc 'sudo cat /home/tester/mypeople/run/tailscale-state/ip')"
 ```
+
+🔴 **H7 — PIN THE tailscaled SOCKET EVERYWHERE (2026-07-02 rehearsal, `SOCKET_MISMATCH`).** `tailscaled` here runs userland on a **private** socket (`$TSD/tailscaled.sock`), NOT the default `/var/run/tailscale/tailscaled.sock`. EVERY `tailscale` invocation — `up`, `ip`, AND the SUBSTRATE_READY **tailnet gate probe** — MUST pass `--socket=$TSD/tailscaled.sock`. A probe that runs a bare `tailscale ip` (default socket) against this node reports "Tailscale is stopped" / empty IP → a **false FAIL of gate 1** even though the node is fully joined. So: export `TSD` for the gate, and any tailnet check the Verify/gate does uses `--socket=$TSD/tailscaled.sock` (`TSD=/home/tester/mypeople/run/tailscale-state`).
 
 ### 6. Inside the container: hydrate the COMPLETE MyPeople from `mypeople.seed.md`, in JOIN mode
 
@@ -587,6 +591,8 @@ docker exec "$NODE_NAME" bash -lc 'tail -1 ~/mypeople/run/queue-client.log; pgre
 
 ### 7.6 Start the continuous terminal recorder (asciinema default; browser opt-in only)
 
+🔴 **H-NEW — recordings live INSIDE the node (`~/recordings/<NODE>.cast`, and any opt-in browser `.webm`); `docker rm` destroys them.** So the recording is only proof if it is **flushed off-node BEFORE any teardown** (`docker cp "$NODE:/home/tester/recordings/." <host-outdir>/`). Any caller that tears a node down — the harden loop's clean-slate (see `harden.seed.md` §A) or a production run's own teardown — MUST pull all recordings host-side and confirm the files exist FIRST. Never `rm` a node before its cast is safely off-node.
+
 Per the recorder mandate, every seedbed's worker pane is recorded for its entire lifetime by
 **asciinema by default**:
 
@@ -666,6 +672,10 @@ fi
 ## Verify  (AGENT-DRIVEN — reason over the node; do NOT rely on a pass/fail script)
 
 You are an agent. **Confirm the node actually works by reasoning over evidence**, not by trusting exit codes. Gather the facts below, judge each, and only then conclude. If anything is ambiguous, dig in (read logs, peek panes) before declaring done.
+
+> 🔴 **Rehearsal-hardened gate contracts (2026-07-02 blind rehearsal):**
+> - **H6 — QUEUE READINESS = STABLY 200, not a single probe.** During bring-up the queue-server churns (a single `/health` probe caught it mid-restart: `200 → 000 → 200`). Judge the queue/registration gates on **`/health` returning 200 on ≥3 consecutive probes ~1s apart** (stable for a few seconds), never one shot. A lone 000 mid-build is churn, not a failure.
+> - **H2 — THE HYDRATED NODE MUST PERSIST ITS VERIFY HARNESS.** A from-seed hydrate can reach `SEED_RESULT=DONE` yet leave **no `~/mypeople/verify` on disk** (it self-verified inline). That makes the acceptance **impossible to re-run independently** (Rule 15 — the judge must re-run, not trust the builder's claim). Gate: after hydrate, assert `~/mypeople/verify/verify.sh` (or `verify.py`) EXISTS and re-run it here for the verdict. If it's absent, that is a GAP to fold upstream into `mypeople.seed.md` §14 (the seed must WRITE its verify harness to disk, not only run it) — `SEED_RESULT=DONE` without a persisted, re-runnable Verify is a CLAIM, not a close.
 
 > **Run Verify on the BOSS/RENDER host (host-aware).** Gates 3/4/7 are judged against artifacts on the machine that owns the central queue, the central Boss tmux pane, and the asciinema render kit (`agg`+`ffmpeg`+`recorder/`). If the node's docker daemon is on a **remote** host, do NOT run Verify on that remote host — run it here on the Boss/render host and point docker at the node: `export DOCKER_HOST=ssh://<node-host>` (e.g. `ssh://server`). Every `docker exec` below then reaches the remote node while the Boss-pane capture (gate 4) and the render (gate 7) stay local. See the host-model preamble in the hard-gate block.
 
