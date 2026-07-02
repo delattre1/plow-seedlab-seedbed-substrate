@@ -10,7 +10,7 @@
 #      OUT(html path — served dir is its dirname, so use a DEDICATED dir, never one with secrets)
 #      PROBE(1=run AUTH_OK probes, 0=skip/fast) SERVE_PORT(if set, serve dirname(OUT) on tailnet)
 set -uo pipefail
-export DOCKER_HOST="${DOCKER_HOST:-ssh://server}"
+export DOCKER_HOST="${DOCKER_HOST:-ssh://server-ts}"   # LAN `server` route is down; tailnet `server-ts` is the reliable path
 BASE_IMG="${BASE_IMG:-inner-base:clean}"
 LEASE_DIR="${SEEDBED_LEASE_DIR:-$HOME/.config/seedbed/leases-bank}"
 OUT="${OUT:-$HOME/seedbed-bank-www/index.html}"
