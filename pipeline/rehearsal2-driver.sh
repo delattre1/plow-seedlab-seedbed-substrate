@@ -111,34 +111,16 @@ dex 'tmux capture-pane -t hyd:boss -p 2>/dev/null | grep -q "bypass permissions 
 dex "tmux new-session -d -s rec 'asciinema rec --quiet --overwrite -c \"TMUX= tmux attach -rt hyd:boss\" ~/recordings/${NODE}.cast'"
 sleep 2
 dex "tmux send-keys -t hyd:boss -l -- $(printf '%q' "$PROMPT")"; dex "tmux send-keys -t hyd:boss Enter"
-say "seed handed to recorded blind claude pane; self-heartbeat driving to SEED_RESULT"
+TSD=/home/tester/mypeople/run/tailscale-state; THYD=$(date +%s)
+say "seed handed to recorded blind claude pane; polling the 7-gate for completion (H-DONE = 7/7, not the marker)"
 
-# --- 6. SELF-HEARTBEAT (H5): poll the pane live; never idle; bounded 45m ------
-STAGE=drive
-deadline=$(( $(date +%s) + 2700 ))
-while [ "$(date +%s)" -lt "$deadline" ]; do
-  # completion = the MARKER FILE the agent writes (pane-grep would false-match the prompt echo)
-  MK="$(dex 'cat /home/tester/hydrate.done 2>/dev/null' || true)"
-  if [ -n "$MK" ]; then case "$MK" in DONE*) SEED_RESULT=DONE;; *) SEED_RESULT="$MK";; esac; break; fi
-  # H4 defensive: dismiss an in-node feedback dialog if it ever appears
-  dex 'tmux capture-pane -t hyd:boss -p 2>/dev/null | grep -q "How is Claude doing this session"' && { dex 'tmux send-keys -t hyd:boss 0' 2>/dev/null; say "H4: dismissed in-node feedback dialog"; }
-  # stop early if the pane's claude died without a marker
-  dex 'tmux has-session -t hyd 2>/dev/null' || { SEED_RESULT="PANE_DIED_NO_MARKER"; break; }
-  say "…building: bin=$(dex 'ls ~/mypeople/bin 2>/dev/null|wc -l') daemons=$(dex 'pgrep -c -f "queue-server|todo-server|queue-client" 2>/dev/null') tn=$(dex 'sudo tailscale --socket=/home/tester/mypeople/run/tailscale-state/tailscaled.sock ip -4 2>/dev/null|head -1' 2>/dev/null)"
-  sleep 45
-done
-say "hydrate ended: $SEED_RESULT"
-
-# --- 7. SUBSTRATE_READY 7-gate (H6 stable-200, H7 socket-pinned) --------------
-STAGE=gate
-TSD=/home/tester/mypeople/run/tailscale-state
-GATES="$(dex "
-G=0; P=0
-ip=\$(sudo tailscale --socket=$TSD/tailscaled.sock ip -4 2>/dev/null|head -1)   # H7 socket-pinned
+# --- gate fn: SUBSTRATE_READY 7-gate (H6 stable-200, H7 socket-pinned) --------
+run_gates(){ dex "
+P=0
+ip=\$(sudo tailscale --socket=$TSD/tailscaled.sock ip -4 2>/dev/null|head -1)
 [ -n \"\$ip\" ] && { echo 'G1 tailnet: PASS ('\$ip')'; P=\$((P+1)); } || echo 'G1 tailnet: FAIL'
 cn=\$(ls ~/mypeople/bin/queue-server.py ~/mypeople/bin/mp ~/mypeople/bin/todo-server.py ~/mypeople/bin/dashboard.html 2>/dev/null|wc -l)
 [ \"\$cn\" -ge 4 ] && { echo 'G2 components: PASS'; P=\$((P+1)); } || echo \"G2 components: FAIL (\$cn)\"
-# H6: queue stably 200 over 3 probes ~1s apart
 ok=0; for k in 1 2 3; do [ \"\$(curl -fsS -o /dev/null -w %{http_code} --max-time 4 http://127.0.0.1:9900/health 2>/dev/null)\" = 200 ] && ok=\$((ok+1)); sleep 1; done
 ag=\$(curl -fsS --max-time 4 -H \"X-Queue-Secret: \$(grep '^QUEUE_SECRET=' ~/.config/mypeople/queue.env|cut -d= -f2-)\" http://127.0.0.1:9900/agents 2>/dev/null)
 nag=\$(echo \"\$ag\"|grep -oE agent_id|wc -l)
@@ -149,30 +131,64 @@ tt=\$(curl -fsS -o /dev/null -w %{http_code} --max-time 4 http://127.0.0.1:7681/
 pgrep -f tkmx >/dev/null 2>&1 && { echo 'G6 tkmx: PASS'; P=\$((P+1)); } || echo 'G6 tkmx: FAIL'
 pgrep -f asciinema >/dev/null 2>&1 && { echo 'G7 recorder: PASS'; P=\$((P+1)); } || echo 'G7 recorder: FAIL'
 echo \"GATES_PASSED=\$P/7\"
-")"
-echo "$GATES"; GATETBL="$GATES"
+"; }
 
-# --- 8. H-NEW: FLUSH cast off-node BEFORE teardown ---------------------------
+# --- 6. COMPLETION = the 7-gate goes 7/7 (H-DONE applied to DETECTION). Poll the
+#        gate every interval; declare SUCCESS the instant it's 7/7 — do NOT wait on
+#        the lagging seed marker (that caused the TIMEOUT-while-7/7 semantics bug). H5 heartbeat. --
+STAGE=drive
+deadline=$(( $(date +%s) + 3600 ))
+GATES=""; PASSN="0/7"; TREADY=""
+while [ "$(date +%s)" -lt "$deadline" ]; do
+  dex 'tmux capture-pane -t hyd:boss -p 2>/dev/null | grep -q "How is Claude doing this session"' && { dex 'tmux send-keys -t hyd:boss 0' 2>/dev/null; say "H4: dismissed in-node feedback dialog"; }
+  GATES="$(run_gates)"; PASSN="$(echo "$GATES"|grep -oE 'GATES_PASSED=[0-9]+/7'|cut -d= -f2)"
+  say "…gate poll: $PASSN | bin=$(dex 'ls ~/mypeople/bin 2>/dev/null|wc -l') daemons=$(dex 'pgrep -c -f "queue-server|todo-server|queue-client" 2>/dev/null')"
+  if [ "$PASSN" = "7/7" ]; then TREADY=$(( $(date +%s) - THYD )); SEED_RESULT="READY_7of7"; say "SUCCESS: 7/7 SUBSTRATE_READY at ${TREADY}s"; break; fi
+  MK="$(dex 'cat /home/tester/hydrate.done 2>/dev/null' || true)"; case "$MK" in BLOCKED*) SEED_RESULT="$MK"; say "agent BLOCKED: $MK"; break;; esac
+  dex 'tmux has-session -t hyd 2>/dev/null' || { SEED_RESULT="PANE_DIED"; say "pane died before 7/7"; break; }
+  sleep 40
+done
+echo "$GATES"; GATETBL="$GATES"
+[ -n "$TREADY" ] || TREADY=$(( $(date +%s) - THYD ))
+say "hydrate-to-7/7 duration: ${TREADY}s (~$((TREADY/60))m)"
+
+# --- 7. seedrec BROWSER recording of the live HUD (once 7/7) ------------------
+STAGE=browser
+WEBM=""
+if [ "$PASSN" = "7/7" ]; then
+  NIP="$(dex "sudo tailscale --socket=$TSD/tailscaled.sock ip -4 2>/dev/null|head -1")"
+  if [ -n "$NIP" ]; then
+    say "seedrec: recording live HUD http://$NIP:9900/dashboard"
+    node /Users/delattre/workspace/seedlab/seedrec/seedrec.mjs start "$NODE" --url "http://$NIP:9900/dashboard" >/dev/null 2>&1 || say "WARN: seedrec start failed"
+    sleep 25
+    node /Users/delattre/workspace/seedlab/seedrec/seedrec.mjs stop "$NODE" --reason ceo-request >/dev/null 2>&1 || true
+    WEBM="$(ls /Users/delattre/workspace/seedlab/recordings/$NODE/*full.webm 2>/dev/null|head -1)"
+    [ -n "$WEBM" ] && say "browser webm -> $WEBM ($(wc -c <"$WEBM") bytes)" || say "WARN: no webm produced"
+  fi
+fi
+
+# --- 8. H-NEW: FLUSH terminal cast off-node BEFORE teardown ------------------
 STAGE=flush
 docker cp "$NODE:/home/tester/recordings/." "$OUTDIR/" >/dev/null 2>&1 || true
 CASTHOST="$(ls "$OUTDIR"/*.cast 2>/dev/null | head -1)"
 [ -n "$CASTHOST" ] && say "flushed cast -> $CASTHOST ($(wc -c <"$CASTHOST" 2>/dev/null) bytes)" || say "WARN: no cast to flush"
 
-# --- 9. teardown + verdict + auto-post ---------------------------------------
+# --- 9. teardown + verdict (H-DONE: PASS iff 7/7) + auto-post ----------------
 teardown
-PASSN="$(echo "$GATES" | grep -oE 'GATES_PASSED=[0-9]+/7' | cut -d= -f2)"
-[ "$SEED_RESULT" = DONE ] && [ "$PASSN" = "7/7" ] && VERDICT="PASS (unattended)" || VERDICT="PARTIAL/FAIL"
-# stage the cast as a servable proof
-CASTPROOF=""
+[ "$PASSN" = "7/7" ] && VERDICT="PASS (unattended, 7/7)" || VERDICT="FAIL ($PASSN)"
+CASTPROOF=""; WEBMPROOF=""
 if [ -n "$CASTHOST" ]; then HX=$(python3 -c 'import secrets;print(secrets.token_hex(6))'); cp "$CASTHOST" "/Users/delattre/mypeople/todos/proofs/${HX}_reh2.cast" 2>/dev/null && CASTPROOF="/todo/proof-file/${HX}_reh2.cast"; fi
-say "VERDICT=$VERDICT SEED_RESULT=$SEED_RESULT gates=$PASSN kicks=$KICKS"
-post_card "REHEARSAL #2 — HANDS-OFF PROOF (node $NODE, disposable, self-spun+torn-down). Seed @ c935826 folds live.
-RESULT: $VERDICT · SEED_RESULT=$SEED_RESULT
-manual kicks needed: $KICKS   (0 = fully unattended; the driver self-spun, self-drove, self-flushed, self-tore-down, self-posted)
+if [ -n "$WEBM" ]; then HY=$(python3 -c 'import secrets;print(secrets.token_hex(6))'); cp "$WEBM" "/Users/delattre/mypeople/todos/proofs/${HY}_reh2.webm" 2>/dev/null && WEBMPROOF="/todo/proof-file/${HY}_reh2.webm"; fi
+say "VERDICT=$VERDICT gates=$PASSN kicks=$KICKS ready=${TREADY}s cast=$CASTPROOF webm=$WEBMPROOF"
+post_card "REHEARSAL #2 (final driver) — FULLY HANDS-OFF (node $NODE, disposable, self-spun→self-torn-down).
+RESULT: $VERDICT · manual kicks needed: $KICKS
+HYDRATE DURATION (spin→7/7 SUBSTRATE_READY, hands-off): ${TREADY}s (~$((TREADY/60))m) — MEASURED, hard fact.
 SUBSTRATE_READY 7-gate:
 $GATES
-Contracts exercised by the DRIVER itself: H3 recorded-pane live markers · H4 onboarding/trust flags pre-set (no dialog stall) + defensive in-node dismiss · H5 self-heartbeat (interval progress, auto-report) · H6 queue stable-200 x3 · H7 tailscaled --socket pinned in the gate · H-NEW cast flushed off-node BEFORE teardown${CASTPROOF:+ (attached)} · auto-teardown (rm + lease release).
-RECORDING: terminal cast ${CASTPROOF:-'(none captured — gap)'}. Browser seedrec: not wired into this self-contained headless driver (gap: browser recording needs the seedrec tooling; terminal cast is the primary proof).
-$([ "$KICKS" = 0 ] && [ "$VERDICT" = 'PASS (unattended)' ] && echo 'UNATTENDED-100% PROVEN for the drive: zero kicks, 7/7.' || echo 'NOT fully clean — see gate table + kicks; iterate on the failing item.')"
-[ -n "$CASTPROOF" ] && curl -fsS -X POST "http://127.0.0.1:9933/todo/proof" -H "Content-Type: application/json" -H "X-Queue-Secret: $MPSEC" -d "{\"task_id\":\"$CARD\",\"kind\":\"link\",\"url\":\"$CASTPROOF\"}" >/dev/null 2>&1 || true
+COMPLETION = 7/7 gates (H-DONE applied to detection): the driver polls the gate and declares success the instant it's 7/7 — no longer waits on the lagging seed marker (fixes the TIMEOUT-while-7/7 semantics).
+Driver-implemented contracts: H3 recorded pane · H4 flags pre-set + defensive dismiss · H5 self-heartbeat/auto-report · H6 queue stable-200x3 · H7 tailscaled --socket pinned · H-NEW flush-before-teardown · auto-teardown (rm+lease release).
+RECORDINGS: terminal cast ${CASTPROOF:-'(none)'}${WEBMPROOF:+ · browser webm attached}.
+$([ "$PASSN" = '7/7' ] && [ "$KICKS" = 0 ] && [ -n "$CASTPROOF" ] && [ -n "$WEBMPROOF" ] && echo '✅ CLOSED: unattended 7/7 + 0 kicks + terminal AND browser recording, within a known budget.' || echo 'Not fully closed yet — check gates/kicks/recordings above.')"
+[ -n "$CASTPROOF" ] && curl -fsS -X POST http://127.0.0.1:9933/todo/proof -H "Content-Type: application/json" -H "X-Queue-Secret: $MPSEC" -d "{\"task_id\":\"$CARD\",\"kind\":\"link\",\"url\":\"$CASTPROOF\"}" >/dev/null 2>&1 || true
+[ -n "$WEBMPROOF" ] && curl -fsS -X POST http://127.0.0.1:9933/todo/proof -H "Content-Type: application/json" -H "X-Queue-Secret: $MPSEC" -d "{\"task_id\":\"$CARD\",\"kind\":\"video\",\"url\":\"$WEBMPROOF\"}" >/dev/null 2>&1 || true
 say "done."
