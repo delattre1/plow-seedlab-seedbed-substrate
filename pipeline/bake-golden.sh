@@ -59,6 +59,16 @@ echo "[bake] 4. golden-boot.sh entrypoint"
 $DOCKER cp "$ROOT/pipeline/golden-boot.sh" "$B":/usr/local/bin/seedbed-golden-boot
 $DOCKER exec -u root "$B" chmod +x /usr/local/bin/seedbed-golden-boot
 
+echo "[bake] 5. queue-client V2 compat shim (fleet fix — card ca09a42c386febed)"
+# The central queue-server is V2: /task/poll returns a LIST with the verb in 'type'.
+# The base snapshot bakes a pre-V2 queue-client that expects a DICT + 'action', so it
+# CRASHES on the first spawn task and goes registered-but-deaf (JOIN spawns silently
+# fail fleet-wide). Apply the idempotent shim at bake time so every golden node ships
+# V2-compatible. Single source of truth: pipeline/queue-client-v2-shim.py.
+$DOCKER cp "$ROOT/pipeline/queue-client-v2-shim.py" "$B":/tmp/queue-client-v2-shim.py
+$DOCKER exec -u tester "$B" python3 /tmp/queue-client-v2-shim.py /home/tester/mypeople/bin/queue-client.py
+$DOCKER exec -u tester "$B" python3 -c 'import ast,sys; ast.parse(open("/home/tester/mypeople/bin/queue-client.py").read()); print("  queue-client.py parses ✓")'
+
 echo "[bake] commit -> $OUT"
 $DOCKER commit --change 'ENTRYPOINT ["/usr/local/bin/seedbed-golden-boot"]' "$B" "$OUT" >/dev/null
 
@@ -69,5 +79,6 @@ $DOCKER run --rm --entrypoint sh "$OUT" -c '
   echo -n "tkmx-client="; ls -d /home/tester/tkmx-client >/dev/null 2>&1 && echo yes || echo NO
   echo -n "claude-wrapper-fwd="; tail -1 /usr/local/bin/claude-wrapper | grep -q "\"\$@\"" && echo ok || echo BAD
   echo -n "entrypoint-placeholder="; grep -o "new-session -d -s mc-main -n console" /usr/local/bin/seedbed-golden-boot || echo BAD
+  echo -n "queue-client-v2(must be ok)="; grep -q "v2-compat-shim" /home/tester/mypeople/bin/queue-client.py && grep -q "isinstance(tasks, dict)" /home/tester/mypeople/bin/queue-client.py && echo ok || echo BAD
 '
 echo "[bake] DONE: $OUT"

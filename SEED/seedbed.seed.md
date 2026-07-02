@@ -392,6 +392,64 @@ if "TTYD_PUBLIC_URL" not in s:
       "post_json(\"/heartbeat\", {\"hostname\": HOSTNAME, \"attach_base\": TTYD_PUBLIC_URL, \"substrate_ready\": os.path.exists(os.path.expanduser(\"~/SUBSTRATE_READY.json\"))})")
     open(f,"w").write(s); print("patched queue-client attach_base + substrate_ready")
 PY
+# (b1) V2 QUEUE COMPAT SHIM (fleet fix — card ca09a42c386febed). The central
+#      queue-server is V2: GET /task/poll returns a LIST of tasks with the verb in
+#      "type". The pre-V2 client baked here expects a single DICT and reads "action",
+#      so it CRASHES on the first spawn task ('list' object has no attribute 'get')
+#      and goes registered-but-deaf — JOIN spawns then fail silently on every node.
+#      Replace task_loop with the V2 loop (LIST-or-DICT + "type" OR "action"), byte-
+#      identical to the central queue-client so a node never drifts from its server.
+#      Idempotent. SAME transform as pipeline/queue-client-v2-shim.py — keep in sync.
+python3 - <<"PY"
+f="/home/tester/mypeople/bin/queue-client.py"; s=open(f).read()
+if "[v2-compat-shim]" not in s and "\ndef task_loop():" in s and "\ndef main(" in s.split("\ndef task_loop():",1)[1]:
+    V2='''def _handle_one(task):  # [v2-compat-shim]
+    tid = task.get("task_id")
+    action = task.get("type") or task.get("action") or ""
+    handler = HANDLERS.get(action)
+    if not handler:
+        try:
+            post_json("/task/result", {"task_id": tid, "ok": False,
+                                       "result": {"error": f"unknown action {action!r}"}})
+        except urllib.error.URLError:
+            pass
+        return
+    try:
+        ok, payload = handler(task)
+    except Exception as e:
+        ok, payload = False, f"handler raised: {e}"
+    try:
+        if ok:
+            post_json("/task/result", {"task_id": tid, "ok": True, "result": payload})
+        else:
+            post_json("/task/result", {"task_id": tid, "ok": False, "result": {"error": str(payload)}})
+    except urllib.error.URLError as e:
+        print(f"{time.strftime('%H:%M:%S')} result POST FAIL: {e}", file=sys.stderr, flush=True)
+    print(f"{time.strftime('%H:%M:%S')} task {str(tid)[:8]} {action} \\u2192 ok={ok}", flush=True)
+
+
+def task_loop():  # [v2-compat-shim]
+    while True:
+        try:
+            tasks = get_json(f"/task/poll?hostname={urllib.parse.quote(HOSTNAME)}")
+        except urllib.error.URLError as e:
+            print(f"{time.strftime('%H:%M:%S')} poll FAIL: {e}", file=sys.stderr, flush=True)
+            time.sleep(POLL_INTERVAL)
+            continue
+        if isinstance(tasks, dict):
+            tasks = [tasks] if tasks.get("task_id") else []
+        if not tasks:
+            time.sleep(POLL_INTERVAL)
+            continue
+        for task in tasks:
+            _handle_one(task)
+'''
+    head, rest = s.split("\ndef task_loop():", 1)
+    _, after_main = rest.split("\ndef main(", 1)
+    s = head + "\n" + V2 + "\ndef main(" + after_main
+    import ast; ast.parse(s)          # never write a file that won't parse
+    open(f,"w").write(s); print("patched queue-client V2 poll/dispatch shim")
+PY
 # (b2) Ensure the LIVE ~/.claude.json marks onboarding complete so a spawned agent
 #      never hits the first-run theme/onboarding dialog. The Step 2 snapshot fix +
 #      entrypoint already restore this; this makes the running container explicit and
