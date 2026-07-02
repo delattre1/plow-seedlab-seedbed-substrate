@@ -100,7 +100,10 @@ if dex 'timeout 60 claude -p "reply exactly AUTH_OK" 2>/dev/null | grep -q AUTH_
 STAGE=hydrate
 docker cp "$SEED" "$NODE:/home/tester/mypeople.seed.md" >/dev/null 2>&1
 dex 'sudo apt-get -qq update >/dev/null 2>&1; sudo apt-get -qq install -y asciinema tmux >/dev/null 2>&1; mkdir -p ~/recordings; true'
-PROMPT='Read /home/tester/mypeople.seed.md and EXECUTE it fully as the hydrating agent: run every ## Step to SEED_RESULT=DONE, then run its ## Verify. STANDALONE fresh install (no UPSTREAM). TS_AUTHKEY is in your env for the tailnet join. Work autonomously, non-interactively (all §10 defaults); do NOT ask questions. Print SEED_RESULT=DONE, or BLOCKED_REASON=<reason>.'
+# Marker FILE, not pane text: the prompt itself names the sentinel, so a pane-grep would
+# false-match the prompt echo (rehearsal #2a bug). The agent writes a file; the driver polls it.
+dex 'rm -f /home/tester/hydrate.done 2>/dev/null; true'
+PROMPT='Read /home/tester/mypeople.seed.md and EXECUTE it fully as the hydrating agent: run every ## Step to completion, then run its ## Verify. STANDALONE fresh install (no UPSTREAM). TS_AUTHKEY is in your env for the tailnet join. Work autonomously, non-interactively (all §10 defaults); do NOT ask questions. MANDATORY FINAL ACTION: when the seed is fully hydrated and its Verify passes, run exactly: printf DONE > /home/tester/hydrate.done ; if you truly cannot proceed, run exactly: printf "BLOCKED:<short reason>" > /home/tester/hydrate.done   (this marker FILE is how completion is detected — do not skip it).'
 # claude runs in a tmux pane; asciinema records that pane -> live markers + the cast in one.
 dex "tmux kill-server 2>/dev/null; tmux new-session -d -s hyd -n boss -x 220 -y 50 'claude --dangerously-skip-permissions'"
 for i in $(seq 1 45); do dex 'tmux capture-pane -t hyd:boss -p 2>/dev/null | grep -q "bypass permissions on"' && break; sleep 2; done
@@ -114,12 +117,13 @@ say "seed handed to recorded blind claude pane; self-heartbeat driving to SEED_R
 STAGE=drive
 deadline=$(( $(date +%s) + 2700 ))
 while [ "$(date +%s)" -lt "$deadline" ]; do
-  PANE="$(dex 'tmux capture-pane -t hyd:boss -p -S -6000 2>/dev/null' || true)"
-  # H4 defensive: dismiss any feedback dialog if it ever appears in-node
-  echo "$PANE" | grep -q "How is Claude doing this session" && { dex 'tmux send-keys -t hyd:boss 0' 2>/dev/null; say "H4: dismissed in-node feedback dialog"; }
-  BR="$(echo "$PANE" | grep -oE 'BLOCKED_REASON=[A-Za-z0-9_.:-]+' | tail -1)"
-  if [ -n "$BR" ]; then SEED_RESULT="$BR"; break; fi
-  if echo "$PANE" | grep -qE '(^|[^A-Za-z=])SEED_RESULT=DONE([^A-Za-z]|$)' && ! echo "$PANE" | grep -qiE 'could not|cannot|unable|proceed to SEED_RESULT'; then SEED_RESULT=DONE; break; fi
+  # completion = the MARKER FILE the agent writes (pane-grep would false-match the prompt echo)
+  MK="$(dex 'cat /home/tester/hydrate.done 2>/dev/null' || true)"
+  if [ -n "$MK" ]; then case "$MK" in DONE*) SEED_RESULT=DONE;; *) SEED_RESULT="$MK";; esac; break; fi
+  # H4 defensive: dismiss an in-node feedback dialog if it ever appears
+  dex 'tmux capture-pane -t hyd:boss -p 2>/dev/null | grep -q "How is Claude doing this session"' && { dex 'tmux send-keys -t hyd:boss 0' 2>/dev/null; say "H4: dismissed in-node feedback dialog"; }
+  # stop early if the pane's claude died without a marker
+  dex 'tmux has-session -t hyd 2>/dev/null' || { SEED_RESULT="PANE_DIED_NO_MARKER"; break; }
   say "…building: bin=$(dex 'ls ~/mypeople/bin 2>/dev/null|wc -l') daemons=$(dex 'pgrep -c -f "queue-server|todo-server|queue-client" 2>/dev/null') tn=$(dex 'sudo tailscale --socket=/home/tester/mypeople/run/tailscale-state/tailscaled.sock ip -4 2>/dev/null|head -1' 2>/dev/null)"
   sleep 45
 done
