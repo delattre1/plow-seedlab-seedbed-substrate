@@ -3,10 +3,9 @@
 # bake-golden.sh — REPRODUCIBLE build of the golden substrate image from a base
 # snapshot, applying every fold this provisioning relies on (zero manual steps).
 #
-# This is the FROM-BASE path. The FROM-SEED path (pipeline/build-golden.sh) is
-# currently blocked by upstream mypeople-seed drift (KeyError '3'), so the base
-# here is a snapshot of a known-good hydrated substrate node (see BASE_IMAGE).
-# Everything ON TOP of the base is scripted + committed here.
+# This is the FROM-BASE path: the base here is a snapshot of a known-good
+# hydrated substrate node (see BASE_IMAGE), and everything ON TOP of the base is
+# scripted + committed here. (The FROM-SEED path is pipeline/build-golden.sh.)
 #
 # Bakes, in order:
 #   1. asciinema            (apt) — terminal recording (gate 7 / hydrate-recorded.sh)
