@@ -103,6 +103,26 @@ PROBE=0 bin/bank-dashboard.sh                       # fast render, skip auth pro
 
 If the dashboard looks stale, just re-run it — it reflects live host state at run time.
 
+### Keep it ALWAYS live (durable launchd agent)
+
+A one-shot regen goes stale the moment leases change. The **durable** setup is a launchd user
+agent that re-runs the regen loop every 120s and **auto-restarts on death or reboot** (a bare
+`nohup` loop kept dying and freezing the page). One-time install on the coordinator (Mac):
+
+```bash
+# from the substrate repo, on the coordinator (Mac)
+bash bin/install-bank-dashboard-agent.sh            # install + start the launchd agent
+bash bin/install-bank-dashboard-agent.sh --uninstall
+```
+
+- Agent label **`com.seedbed.bank-dashboard`** (`~/Library/LaunchAgents/`), `KeepAlive=true` +
+  `RunAtLoad=true`, env `DOCKER_HOST=ssh://server-ts` (the LAN `server` route is down — the tailnet
+  alias is the reliable path), `SEEDBED_LEASE_DIR=~/.config/seedbed/leases-bank`.
+- It runs [`bin/bank-dashboard-loop.sh`](../bin/bank-dashboard-loop.sh) (the repo-tracked loop —
+  **not** an untracked host-local script, which is how it drifted before).
+- Verify durability: `kill` the loop pid and confirm launchd respawns a new one within ~10s and the
+  page's `generated` timestamp stays current.
+
 ---
 
 ## 6. Common operations
