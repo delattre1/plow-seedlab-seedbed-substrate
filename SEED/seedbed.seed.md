@@ -48,7 +48,7 @@ Each independently confirmable by an agent **reasoning over the node** (not a sc
 - The complete MyPeople is installed from `mypeople.seed.md`: `bin/queue-server.py`, `bin/queue-client.py`, `bin/mp`, `bin/dashboard.html`, `boss-CLAUDE.md`, the `tmux-boss-hooks` plugin, `~/.tmux.conf` + TPM.
 - The node is registered as a **client** on the CENTRAL queue and advertises a tailnet `attach_base`.
 - The Boss can **spawn** an agent into the node, **converse** with it (send a prompt, get a coherent live reply from inside the container), and **attach** to its tmux in a browser (the per-tab URL serves the node's session).
-- The node's worker pane is being **continuously terminal-recorded by default** with **asciinema** (Step 7.6): a tiny in-container pty logger, ~0% CPU / ~55 MB, race-proven ~14x less RAM & ~300x less CPU than browser recording, writing a growing `~/recordings/<NODE_NAME>.cast`. Browser `seedrec` recording is **not** a duplicate default recorder; it is opt-in only for seeds/tests that explicitly exercise UI/browser behavior and need a `.webm` browser artifact. The terminal recording renders to clean mp4 via `recorder/render_clip.sh` and stops ONLY on a CEO-driven signal (`approved-retire` | `ceo-request`).
+- The node's worker pane is being **continuously terminal-recorded by default** with **asciinema** (Step 7.6): a tiny in-container pty logger, ~0% CPU / ~55 MB, race-proven ~14x less RAM & ~300x less CPU than browser recording, writing a growing `~/recordings/<NODE_NAME>.cast`. Browser `seedrec` recording is **not** a duplicate default recorder; it is opt-in only for seeds/tests that explicitly exercise UI/browser behavior and need a `.webm` browser artifact. The terminal recording renders to clean mp4 via the b-roll repo's render kit (`terminal/lib/render_clip.sh`) and stops ONLY on a CEO-driven signal (`approved-retire` | `ceo-request`).
 - The node runs the **tkmx reporter** daemon: `~/.config/tkmx/.env` carries the CEO's key (chmod 600, **never committed**), `CLIENT_ID=mp-<NODE_NAME>`, and `~/tkmx-client` posts the node's Claude token burn to `$TKMX_SERVER_URL` (HTTP 200). The CEO's leaderboard shows this node as its own "machine".
 
 ## Inputs
@@ -74,7 +74,7 @@ Each independently confirmable by an agent **reasoning over the node** (not a sc
 | `TKMX_CLIENT_ID` | no | `mp-<NODE_NAME>` | — | "Stable, substrate-scoped machine id for this node on the leaderboard. MUST be unique per node (PK is `username+date+model+client_id+source`) — never the host's machine-hashed id, the `seedlab-tkmx` container's id, or another node's. Default `mp-<NODE_NAME>` is unique by construction." |
 | `TKMX_TEAM` | no | `seedbed` | — | "Team grouping for fleet nodes on the leaderboard" |
 | `TKMX_REPORT_INTERVAL` | no | `300` | — | "Seconds between reporter runs inside the node (default 5 min)" |
-| `RECORDER_DIR` | no | `~/workspace/seedlab/recorder` | `[ -f ~/workspace/seedlab/recorder/render_clip.sh ]` | "asciinema render kit (Step 7.6 / gate 7): `render_clip.sh` + `normalize_glyphs.py` + bundled `fonts/` (JetBrainsMono Nerd Font Mono). Rendering also needs `agg` + `ffmpeg` on the render host (`brew install agg ffmpeg` / `cargo install --git https://github.com/asciinema/agg`). asciinema itself is installed INSIDE each node at Step 7.6 (Debian: `apt-get install asciinema`)." |
+| `RECORDER_DIR` | no | `~/workspace/plow-seedlab-broll-terminal-and-browser/terminal/lib` | `[ -f "${RECORDER_DIR:-$HOME/workspace/plow-seedlab-broll-terminal-and-browser/terminal/lib}/render_clip.sh" ]` | "asciinema render kit — CANONICAL in the b-roll repo (delattre1/plow-seedlab-broll-terminal-and-browser, `terminal/lib/render_clip.sh` + `normalize_glyphs.py` + `terminal/fonts/` JetBrainsMono Nerd Font Mono). Rendering also needs `agg` + `ffmpeg` on the render host (`brew install agg ffmpeg` / `cargo install --git https://github.com/asciinema/agg`). asciinema itself is installed INSIDE each node at Step 7.6 (Debian: `apt-get install asciinema`)." |
 
 ## Components
 
@@ -647,85 +647,36 @@ sleep 2
 docker exec "$NODE_NAME" bash -lc 'tail -1 ~/mypeople/run/queue-client.log; pgrep -x ttyd >/dev/null && echo "ttyd up"; [ -f ~/mypeople/run/tkmx-report.pid ] && kill -0 "$(cat ~/mypeople/run/tkmx-report.pid)" 2>/dev/null && echo "tkmx reporter up"'
 ```
 
-### 7.6 Start the continuous terminal recorder (asciinema default; browser opt-in only)
+### 7.6 Recording — WHEN + flush-before-teardown (HOW lives in the b-roll repo)
 
 🔴 **H-NEW — recordings live INSIDE the node (`~/recordings/<NODE>.cast`, and any opt-in browser `.webm`); `docker rm` destroys them.** So the recording is only proof if it is **flushed off-node BEFORE any teardown** (`docker cp "$NODE:/home/tester/recordings/." <host-outdir>/`). Any caller that tears a node down — the harden loop's clean-slate (see `harden.seed.md` §A) or a production run's own teardown — MUST pull all recordings host-side and confirm the files exist FIRST. Never `rm` a node before its cast is safely off-node.
 
-Per the recorder mandate, every seedbed's worker pane is recorded for its entire lifetime by
-**asciinema by default**:
+**Recording is a first-class default — but the HOW lives in ONE place.** The single source of truth
+for recording (terminal + browser) is the specialized repo
+**[`delattre1/plow-seedlab-broll-terminal-and-browser`](https://github.com/delattre1/plow-seedlab-broll-terminal-and-browser)**
+("ONE source of truth for B-roll recording — TERMINAL and BROWSER"). This seed does **not** re-document
+how to record; it declares only the seed-specific WHEN + the teardown-flush hook.
 
-- **terminal default (asciinema)** — a tiny in-container pty logger -> growing
-  `~/recordings/<NODE_NAME>.cast`. It is robust, cheap, never depends on CDP/browser painting, and
-  renders to clean H.264 via `recorder/render_clip.sh` (JetBrainsMono Nerd Font Mono;
-  `normalize_glyphs.py` maps the 2 TUI glyphs no mono font covers).
-- **browser opt-in (`seedrec`)** — host-side Chrome+ttyd -> `.webm`, enabled only when
-  `SEEDBED_BROWSER_RECORDING=1` because the seedbed/test is explicitly exercising UI/browser
-  behavior. Non-UI substrate runs MUST NOT start this duplicate browser recorder by default.
-  <!-- seedrec canonical repo: delattre1/plow-seedlab-broll-terminal-and-browser (browser/seedrec/); clone at $HOME/workspace/plow-seedlab-broll-terminal-and-browser -->
+**Policy (seed-specific — WHEN to record):**
+- **Terminal (default).** Every seedbed's worker pane (`mc-main:worker-1`) is terminal-recorded for its
+  entire lifetime by **asciinema**, writing a growing `~/recordings/<NODE_NAME>-<agent>.cast`. Recording
+  is auto-started **ON SPAWN** by mypeople (the `SPAWN ⟺ RECORDING` contract in `mypeople.seed.md` —
+  every `mp spawn` starts the pane recorder), so there is **no separate recorder-start step here**.
+- **Browser (opt-in only).** `seedrec` (host-side Chrome + ttyd → **H.264 mp4**, the universally-playable
+  codec) runs **only** when `SEEDBED_BROWSER_RECORDING=1` because the seedbed/test explicitly exercises
+  UI/browser behavior. Non-UI substrate runs MUST NOT start it (no duplicate recorder).
+- **Lifecycle.** Continuous READ-ONLY capture; stops ONLY on a CEO-driven signal
+  (`approved-retire` | `ceo-request`). Agents never stop a recording on their own judgment.
 
+**HOW (all in the b-roll repo — do NOT duplicate here):** the asciinema pty-logger + the tmux attach
+geometry rules (`window-size largest`, never `manual` — it crashes tmux 3.3a on attach), rendering a
+`.cast`/`.webm` → clean mp4 (`terminal/lib/render_clip.sh`, and the browser `browser/seedrec/` which now
+delivers **H.264 mp4** — VP9 webm is NOT playable in Safari/QuickTime). For a UI seedbed, drive
+`browser/seedrec/seedrec.mjs start|stop` per that repo's README; the deliverable is `<node>-full.mp4`.
 
-**The tmux geometry rule.** Recorder clients attach READ-ONLY to `mc-main:worker-1`. Set
-`window-size largest` and `aggressive-resize off` so incidental smaller attach clients cannot shrink
-the worker pane. Do **NOT** use `window-size manual` — it crashes tmux 3.3a on the next client attach
-(verified twice: it kills the whole server + worker). The default asciinema recorder uses one stable
-read-only client at a fixed geometry. The optional browser recorder, when explicitly enabled, uses the
-same geometry so it cannot constrain the terminal recording.
-
-**Lifecycle contract:** continuous READ-ONLY capture; stops ONLY on a CEO-driven signal
-(`approved-retire` | `ceo-request`) — `tmux kill-session -t rec` for asciinema; if the optional
-browser recorder was explicitly enabled, also stop `seedrec` and the optional recorder ttyd. Agents
-NEVER stop a recording on their own judgment.
-
-```bash
-# (recorder-after-worker) the worker pane must exist BEFORE recording
-"$HOME/mypeople/bin/mp" spawn "$NODE_NAME/main:worker-1" --cwd /home/tester --backend claude --boss "$CENTRAL_BOSS" \
-  || { echo "BLOCKED_REASON=worker_spawn_failed"; exit 1; }
-# pin sizing — largest, never manual (manual crashes tmux on attach); no aggressive-resize
-docker exec "$NODE_NAME" tmux set -g window-size largest
-docker exec "$NODE_NAME" tmux setw -g aggressive-resize off
-# asciinema in the node (Debian apt -> native v2 .cast)
-docker exec "$NODE_NAME" bash -lc 'command -v asciinema >/dev/null || (sudo apt-get update -qq && sudo apt-get install -y -qq asciinema) >/dev/null 2>&1; asciinema --version' \
-  || { echo "BLOCKED_REASON=asciinema_install_failed"; exit 1; }
-
-W="${SEEDBED_REC_COLS:-120}"; H="${SEEDBED_REC_ROWS:-30}"
-docker exec "$NODE_NAME" bash -lc "
-  mkdir -p ~/recordings
-  tmux kill-session -t rec 2>/dev/null || true
-  tmux new-session -d -s rec -x ${W} -y ${H}
-  sleep 1
-  tmux send-keys -t rec \"asciinema rec --quiet --append -c \\\"TMUX= tmux attach -rt mc-main:worker-1\\\" ~/recordings/${NODE_NAME}.cast\" Enter
-"
-sleep 4
-# VERIFY: the .cast GROWS (real pty capture); no browser recording is produced by default; zombies stay 0 (--init reaping).
-CAST="/home/tester/recordings/${NODE_NAME}.cast"; CAPTURED=0
-sleep 6; S1=$(docker exec "$NODE_NAME" bash -lc "wc -c < $CAST 2>/dev/null")
-for i in $(seq 1 8); do sleep 4; S2=$(docker exec "$NODE_NAME" bash -lc "wc -c < $CAST 2>/dev/null"); [ "${S2:-0}" -gt "${S1:-0}" ] && { CAPTURED=1; break; }; done
-[ "$CAPTURED" = 1 ] || { echo "BLOCKED_REASON=asciinema_not_capturing"; exit 1; }
-if [ "${SEEDBED_BROWSER_RECORDING:-0}" != "1" ]; then
-  [ ! -d "$HOME/workspace/seedlab/recordings/${NODE_NAME}-browser" ] \
-    || { echo "BLOCKED_REASON=browser_recording_started_by_default"; exit 1; }
-fi
-Z=$(docker exec "$NODE_NAME" bash -lc 'ps -eo stat | grep -c "^Z"')
-[ "${Z:-0}" -eq 0 ] || echo "WARN: ${Z} zombies — is the container --init (Step 4)?"
-echo "terminal recording VERIFIED: asciinema .cast ${S1}->${S2}B (growing); browser_default=off; geometry=${W}x${H}; zombies=${Z}"
-
-# OPTIONAL: browser recording for UI/browser seedbeds only. This block MUST be enabled explicitly by
-# the seed/test (SEEDBED_BROWSER_RECORDING=1). It is intentionally after the default terminal
-# recording is proven so non-UI substrate runs do not create duplicate browser artifacts.
-if [ "${SEEDBED_BROWSER_RECORDING:-0}" = "1" ]; then
-  TTYD_REC_PORT="${TTYD_REC_PORT:-7726}"
-  setsid ttyd -p "$TTYD_REC_PORT" -t 'fontFamily=Menlo, Monaco, "Cascadia Mono", "Fira Code", "Courier New", monospace' -t disableLeaveAlert=true -t fontSize=14 \
-    docker exec -it "$NODE_NAME" tmux attach -rt mc-main:worker-1 >"/tmp/ttyd-rec-${NODE_NAME}.log" 2>&1 &
-  echo $! >"/tmp/ttyd-rec-${NODE_NAME}.pid"
-  sleep 3
-  SEEDREC_ROTATE_MS="${SEEDREC_ROTATE_MS:-30000}" node "$HOME/workspace/plow-seedlab-broll-terminal-and-browser/browser/seedrec/seedrec.mjs" start "${NODE_NAME}-browser" \
-    --url "http://localhost:${TTYD_REC_PORT}/" --width 854 --height 480
-  sleep 6
-  node "$HOME/workspace/plow-seedlab-broll-terminal-and-browser/browser/seedrec/seedrec.mjs" status "${NODE_NAME}-browser" | grep -q RECORDING \
-    || { echo "BLOCKED_REASON=browser_seedrec_not_recording"; exit 1; }
-  echo "browser recording ENABLED intentionally: ${NODE_NAME}-browser on :${TTYD_REC_PORT}"
-fi
-```
+**Verify (seed-specific gate — see `## Verify` gate 7):** the worker pane's `~/recordings/<NODE_NAME>-*.cast`
+EXISTS and GROWS between two reads (real pty capture); if `SEEDBED_BROWSER_RECORDING=1`, `seedrec status`
+reports `RECORDING`. The rendered clean frame uses the b-roll render kit.
 
 ## Verify  (AGENT-DRIVEN — reason over the node; do NOT rely on a pass/fail script)
 
@@ -755,7 +706,7 @@ You are an agent. **Confirm the node actually works by reasoning over evidence**
 
 6. **Token burn reported (tkmx on every substrate).** Inside the node, `tail -5 ~/mypeople/run/tkmx-report.log` shows `Server responded 200` with `"rows": <n>` (an empty-rows 200 is fine on a fresh node — it still proves auth + connectivity). Confirm `~/.config/tkmx/.env` is `chmod 600`, carries `CLIENT_ID=mp-<NODE_NAME>`, `REPORT_DEV_STATS=true` + `REPORT_SESSION_STATS=true` + `REPORT_MACHINE_CONFIG=true`, and that the CEO's `API_KEY` is present in it but **nowhere in git or the image**. On the leaderboard the node must appear **identified by its hostname `<NODE_NAME>`** (e.g. `mp-seedbed-3`), NOT as "No config" — check the machine's `hostname` field via `curl -fsS "$TKMX_SERVER_URL/api/user/$TKMX_USERNAME"` (the machine with `client_id=mp-<NODE_NAME>` should carry `hostname=<NODE_NAME>`). The report log also shows `Collecting dev stats` (velocity/dev stats are shipped, not just burn — `agentsview --version` must run and be recent). The reporter daemon is alive (`kill -0 $(cat ~/mypeople/run/tkmx-report.pid)`). From the host, `curl -fsS "$TKMX_SERVER_URL/user/$TKMX_USERNAME"` → HTTP 200 mentioning the username (and the velocity section is populated, no longer "No velocity data shared yet"). If the report 4xx's, the `API_KEY` is stale/mismatched; if the log says `agentsview not found` or velocity stays empty, Step 6.6's agentsview install failed or is too old.
 
-6b. **Recorder live (every seedbed auto-records).** The asciinema recorder is capturing the worker pane: `~/recordings/<NODE_NAME>.cast` **grows** between two checks, and `recorder/render_clip.sh` renders a **clean frame** of real terminal content (see gate 7). The recorder runs continuously and stops ONLY on a CEO-driven signal (`tmux kill-session -t rec` on `approved-retire|ceo-request`) — agents never stop it on their own judgment.
+6b. **Recorder live (every seedbed auto-records).** The asciinema recorder is capturing the worker pane: `~/recordings/<NODE_NAME>.cast` **grows** between two checks, and the b-roll render kit (`terminal/lib/render_clip.sh`) renders a **clean frame** of real terminal content (see gate 7). The recorder runs continuously and stops ONLY on a CEO-driven signal (`tmux kill-session -t rec` on `approved-retire|ceo-request`) — agents never stop it on their own judgment.
 
 7. **Conclude — emit `SUBSTRATE_READY` ONLY if all 7 are confirmed by HARD ARTIFACT.** A substrate is NEVER handed over as "ready to hydrate a seed" on a label, an exit code, or a "process launched" proxy — every gate is judged on real evidence (a tailscale Self line, a file, a `/clients` entry, the Boss-pane notification text, a respawn-after-kill 200, a tkmx 200 + leaderboard hostname, a GROWING asciinema .cast + a CLEAN rendered frame). Run the hard-gate below. If all 7 are genuinely true it writes the durable marker `~/SUBSTRATE_READY.json` on the node (and the queue-client then advertises `substrate_ready=true` in its heartbeat — see Step 6b) → print `SEEDBED_RESULT=DONE`. If ANY gate is not truly confirmed it writes NO marker (and removes any stale one) → print `BLOCKED_REASON=substrate_gate_failed`. **There is no partial "done": a half-baked substrate is REFUSED, not waved through.**
 
@@ -763,7 +714,7 @@ You are an agent. **Confirm the node actually works by reasoning over evidence**
 # ===== SUBSTRATE READINESS HARD-GATE (no false-greens) =====
 # HOST-AWARE — RUN THIS GATE ON THE BOSS/RENDER HOST. This gate is judged against artifacts that
 # live on the machine owning the central MyPeople queue (gate 3), the central Boss tmux pane
-# (gate 4), and the asciinema render kit `recorder/render_clip.sh` + `agg`+`ffmpeg` (gate 7). The
+# (gate 4), and the b-roll asciinema render kit (`terminal/lib/render_clip.sh`) + `agg`+`ffmpeg` (gate 7). The
 # NODE's docker daemon may be on a DIFFERENT host (e.g. a remote build server). Reach the node by
 # pointing DOCKER_HOST at the node's docker host — every `docker exec "$N"` below then targets the
 # node while gate 4 (tmux capture of the LOCAL Boss pane) and gate 7 (LOCAL render) stay where they
@@ -813,7 +764,7 @@ docker exec "$N" bash -lc 'kill -0 $(cat ~/mypeople/run/tkmx-report.pid 2>/dev/n
 #    (b) render_clip.sh -> a frame whose mean is DARK (real terminal) not near-white (blank/tofu).
 #    render_clip.sh normalizes the 2 TUI glyphs no mono font covers (⏵->▶, ⎿->└) for a clean frame.
 #    Requires on the render host: agg + ffmpeg + the bundled recorder/fonts (note in ## Inputs).
-CAST="/home/tester/recordings/${N}.cast"; RENDER="$HOME/workspace/seedlab/recorder/render_clip.sh"
+CAST="/home/tester/recordings/${N}.cast"; RENDER="${RECORDER_DIR:-$HOME/workspace/plow-seedlab-broll-terminal-and-browser/terminal/lib}/render_clip.sh"
 S1=$(docker exec "$N" bash -lc "wc -c < $CAST 2>/dev/null"); sleep 5
 S2=$(docker exec "$N" bash -lc "wc -c < $CAST 2>/dev/null")
 if [ "${S2:-0}" -gt "${S1:-0}" ]; then            # .cast actively growing = capturing
@@ -870,7 +821,7 @@ There is **no partial ready**: a substrate is either fully `SUBSTRATE_READY` (al
 # OUT of the node before it's removed — pull the .cast to the host, then render to mp4.
 docker exec "$NODE_NAME" tmux kill-session -t rec 2>/dev/null || true   # stops asciinema (approved-retire)
 docker exec "$NODE_NAME" bash -lc "cat ~/recordings/${NODE_NAME}.cast" > "$HOME/${NODE_NAME}.cast" 2>/dev/null
-"$HOME/workspace/seedlab/recorder/render_clip.sh" "$HOME/${NODE_NAME}.cast" "$HOME/${NODE_NAME}-install.mp4"  # needs agg+ffmpeg+fonts
+"${RECORDER_DIR:-$HOME/workspace/plow-seedlab-broll-terminal-and-browser/terminal/lib}/render_clip.sh" "$HOME/${NODE_NAME}.cast" "$HOME/${NODE_NAME}-install.mp4"  # needs agg+ffmpeg+fonts
 [ -d "$HOME/workspace/seedlab/recordings/${NODE_NAME}-browser" ] \
   && node "$HOME/workspace/plow-seedlab-broll-terminal-and-browser/browser/seedrec/seedrec.mjs" stop "${NODE_NAME}-browser" --reason approved-retire --mp4 \
   || true
