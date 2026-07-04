@@ -41,6 +41,20 @@ echo "gate1: containers up=$ready5 with-marker=$readymark elapsed=${G1ELAPSED}s"
 { [ "$readymark" -eq 5 ] && [ "$G1ELAPSED" -le 15 ]; } && ok "5 SUBSTRATE_READY in ${G1ELAPSED}s (<=15s)" || no "gate1 (ready=$readymark/5, ${G1ELAPSED}s)"
 hr
 
+# ---- Gate 1b: every spun node launches headless Chromium with ZERO in-container installs ----
+# Root-cause fold of hydration run 1ab7bbd104f7b1e1 (card fb8ffbb6d8b4a0ed): the golden image
+# bakes the Chromium OS deps + a pre-warmed Playwright browser, so a fresh node must launch
+# headless Chromium immediately. Uses the baked probe (pipeline/chromium-launch-probe.js).
+echo "## Gate 1b — every spun node launches headless Chromium (zero in-container installs)"
+chrome_ok=0
+for i in 1 2 3 4 5; do
+  out=$($DOCKER exec -u tester "${PFX}-$i" node /home/tester/.pw-selftest/launch.js 2>&1 | grep -E '^CHROMIUM_(OK|FAIL)' | head -1)
+  echo "  ${PFX}-$i -> ${out:-<no chromium output>}"
+  case "$out" in CHROMIUM_OK*) chrome_ok=$((chrome_ok+1)) ;; esac
+done
+[ "$chrome_ok" -eq 5 ] && ok "5/5 nodes launched headless Chromium with zero installs" || no "gate1b (chromium_ok=$chrome_ok/5)"
+hr
+
 # ---- Gate 2: no two substrates share an auth volume -------------------------
 echo "## Gate 2 — no two substrates share an auth volume"
 echo "container -> mounted auth volume (source of $CLAUDE_MOUNT):"

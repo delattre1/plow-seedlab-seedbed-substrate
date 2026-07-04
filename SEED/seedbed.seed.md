@@ -708,7 +708,9 @@ You are an agent. **Confirm the node actually works by reasoning over evidence**
 
 6b. **Recorder live (every seedbed auto-records).** The asciinema recorder is capturing the worker pane: `~/recordings/<NODE_NAME>.cast` **grows** between two checks, and the b-roll render kit (`terminal/lib/render_clip.sh`) renders a **clean frame** of real terminal content (see gate 7). The recorder runs continuously and stops ONLY on a CEO-driven signal (`tmux kill-session -t rec` on `approved-retire|ceo-request`) — agents never stop it on their own judgment.
 
-7. **Conclude — emit `SUBSTRATE_READY` ONLY if all 7 are confirmed by HARD ARTIFACT.** A substrate is NEVER handed over as "ready to hydrate a seed" on a label, an exit code, or a "process launched" proxy — every gate is judged on real evidence (a tailscale Self line, a file, a `/clients` entry, the Boss-pane notification text, a respawn-after-kill 200, a tkmx 200 + leaderboard hostname, a GROWING asciinema .cast + a CLEAN rendered frame). Run the hard-gate below. If all 7 are genuinely true it writes the durable marker `~/SUBSTRATE_READY.json` on the node (and the queue-client then advertises `substrate_ready=true` in its heartbeat — see Step 6b) → print `SEEDBED_RESULT=DONE`. If ANY gate is not truly confirmed it writes NO marker (and removes any stale one) → print `BLOCKED_REASON=substrate_gate_failed`. **There is no partial "done": a half-baked substrate is REFUSED, not waved through.**
+6c. **Headless Chromium launches (root-cause fold of hydration run `1ab7bbd104f7b1e1`).** EVERY browser-verified seed drives headless Chromium via Playwright, and the Debian 12 base historically shipped the Chromium *binary* (via `npx playwright install chromium`) but NOT the OS shared libraries it links against (`libglib-2.0.so.0`, `libnss3`, …) — so Chromium died at launch (`error while loading shared libraries: libglib-2.0.so.0`) and the worker had to run `sudo npx playwright install-deps chromium` in-container, voiding the one-shot. That is now fixed at the IMAGE: `pipeline/bake-golden.sh` step 6 bakes the Chromium OS deps **and** pre-warms the Playwright Chromium browser into `~/.pw-selftest` + `~/.cache/ms-playwright`. This gate PROVES a fresh node launches headless Chromium with **ZERO in-container installs** — `node ~/.pw-selftest/launch.js` (probe: `pipeline/chromium-launch-probe.js`) must print `CHROMIUM_OK version=<v>` and exit 0. It is a **mandatory** gate on every substrate (browser or not): the capability is baked into golden, so it always passes on a healthy node, and a node where Chromium can't launch is REFUSED — the gap can never false-green again.
+
+7. **Conclude — emit `SUBSTRATE_READY` ONLY if EVERY required gate is confirmed by HARD ARTIFACT.** A substrate is NEVER handed over as "ready to hydrate a seed" on a label, an exit code, or a "process launched" proxy — every gate is judged on real evidence (a tailscale Self line, a file, a `/clients` entry, the Boss-pane notification text, a respawn-after-kill 200, a tkmx 200 + leaderboard hostname, a GROWING asciinema .cast + a CLEAN rendered frame, a `CHROMIUM_OK` headless-launch line). Run the hard-gate below. The required gate count is **8 (classic)** — gates 1–7 + the mandatory Chromium-launch gate 9 — **or 9 (DIND)** with gate 8 added. If every required gate is genuinely true it writes the durable marker `~/SUBSTRATE_READY.json` on the node (and the queue-client then advertises `substrate_ready=true` in its heartbeat — see Step 6b) → print `SEEDBED_RESULT=DONE`. If ANY gate is not truly confirmed it writes NO marker (and removes any stale one) → print `BLOCKED_REASON=substrate_gate_failed`. **There is no partial "done": a half-baked substrate is REFUSED, not waved through.**
 
 ```bash
 # ===== SUBSTRATE READINESS HARD-GATE (no false-greens) =====
@@ -728,7 +730,7 @@ You are an agent. **Confirm the node actually works by reasoning over evidence**
 # exact cross-host technicality that held SUBSTRATE_READY on the first remote-server deployment.
 N="$NODE_NAME"; TSIP="$CONTAINER_TS_IP"
 BOSS_MC="mc-$(printf '%s' "$CENTRAL_BOSS" | sed -E 's#^[^/]+/##')"   # <host>/main:Boss -> mc-main:Boss
-g1=0 g2=0 g3=0 g4=0 g5=0 g6=0 g7=0 g8=0
+g1=0 g2=0 g3=0 g4=0 g5=0 g6=0 g7=0 g8=0 g9=0
 # 1) on tailnet — artifact: tailscale Self line (hostname mypeople-$N + 100.x IP)
 docker exec "$N" sudo tailscale --socket=/home/tester/mypeople/run/tailscale-state/tailscaled.sock status 2>/dev/null \
   | grep -qE "^100\.[0-9].*[[:space:]]mypeople-$N([[:space:]]|\$)" && g1=1
@@ -778,30 +780,39 @@ fi
 # 8) DOCKER-CAPABLE (SEEDBED_DIND=1 only) — artifact: as `tester`, `docker compose version` works
 #    AND `docker run hello-world` returns clean (proves inner dockerd + compose plugin + the
 #    docker-group membership are all live). For a classic (non-DIND) substrate this gate is N/A
-#    and auto-passes — the gate count below is 7 (classic) or 8 (DIND).
-NEED=7
+#    and auto-passes. Gate 9 (Chromium launch) is MANDATORY for both. Required count is
+#    8 (classic: gates 1-7 + 9) or 9 (DIND: + gate 8).
 if [ "${SEEDBED_DIND:-0}" = 1 ]; then
-  NEED=8
   docker exec -u tester "$N" bash -lc 'docker compose version >/dev/null 2>&1 && docker run --rm hello-world >/dev/null 2>&1' && g8=1
 else
   g8=1   # N/A for classic substrate
 fi
-echo "GATES: 1=$g1 2=$g2 3=$g3 4=$g4 5=$g5 6=$g6 7=$g7 8=$g8 (NEED=$NEED)"
-GATESUM=$((g1+g2+g3+g4+g5+g6+g7)); [ "$NEED" = 8 ] && GATESUM=$((GATESUM+g8))
+# 9) HEADLESS CHROMIUM LAUNCHES — artifact: `node ~/.pw-selftest/launch.js` prints CHROMIUM_OK.
+#    Root-cause fold of hydration 1ab7bbd104f7b1e1: the Debian 12 base shipped the Chromium
+#    binary but not its OS shared libs (libglib-2.0.so.0 …), so Chromium died at launch and the
+#    worker had to `sudo npx playwright install-deps chromium` in-container (voiding the one-shot).
+#    bake-golden.sh step 6 now bakes the OS deps + a pre-warmed Playwright Chromium, so a fresh
+#    node launches headless Chromium with ZERO in-container installs. MANDATORY on every substrate.
+docker exec -u tester "$N" node /home/tester/.pw-selftest/launch.js 2>/dev/null | grep -q '^CHROMIUM_OK' && g9=1
+NEED=8; [ "${SEEDBED_DIND:-0}" = 1 ] && NEED=9
+echo "GATES: 1=$g1 2=$g2 3=$g3 4=$g4 5=$g5 6=$g6 7=$g7 8=$g8 9=$g9 (NEED=$NEED)"
+GATESUM=$((g1+g2+g3+g4+g5+g6+g7+g9)); [ "$NEED" = 9 ] && GATESUM=$((GATESUM+g8))
 if [ "$GATESUM" -eq "$NEED" ]; then
-  docker exec "$N" bash -lc "printf '{\"node\":\"%s\",\"ts\":\"%s\",\"dind\":%s,\"gates_needed\":%s,\"gates\":{\"1\":true,\"2\":true,\"3\":true,\"4\":true,\"5\":true,\"6\":true,\"7\":true,\"8\":%s}}\n' '$N' \"\$(date -u +%Y-%m-%dT%H:%M:%SZ)\" '$([ "$NEED" = 8 ] && echo true || echo false)' '$NEED' '$([ "$g8" = 1 ] && echo true || echo false)' > ~/SUBSTRATE_READY.json && chmod 600 ~/SUBSTRATE_READY.json"
+  docker exec "$N" bash -lc "printf '{\"node\":\"%s\",\"ts\":\"%s\",\"dind\":%s,\"gates_needed\":%s,\"gates\":{\"1\":true,\"2\":true,\"3\":true,\"4\":true,\"5\":true,\"6\":true,\"7\":true,\"8\":%s,\"9\":true}}\n' '$N' \"\$(date -u +%Y-%m-%dT%H:%M:%SZ)\" '$([ "$NEED" = 9 ] && echo true || echo false)' '$NEED' '$([ "$g8" = 1 ] && echo true || echo false)' > ~/SUBSTRATE_READY.json && chmod 600 ~/SUBSTRATE_READY.json"
   echo "SUBSTRATE_READY emitted on $N (all $NEED confirmed by hard artifact)"
   echo "SEEDBED_RESULT=DONE"
 else
   docker exec "$N" bash -lc 'rm -f ~/SUBSTRATE_READY.json' 2>/dev/null || true   # never leave a stale/partial marker (bash -lc so ~ is the container's home)
-  FAILED=$(for i in $(seq 1 "$NEED"); do eval "v=\$g$i"; [ "$v" != 1 ] && printf '%s,' "$i"; done)
+  FAILED=""
+  for pair in 1:$g1 2:$g2 3:$g3 4:$g4 5:$g5 6:$g6 7:$g7 9:$g9; do [ "${pair#*:}" = 1 ] || FAILED="$FAILED${pair%%:*},"; done
+  [ "${SEEDBED_DIND:-0}" = 1 ] && [ "$g8" != 1 ] && FAILED="${FAILED}8,"
   echo "BLOCKED_REASON=substrate_gate_failed (gates ${FAILED%,} not confirmed; NO SUBSTRATE_READY marker)"
 fi
 ```
 
 ## Substrate readiness contract (handover)
 
-**A node is "ready to hydrate a seed" IFF it carries `~/SUBSTRATE_READY.json`** — the durable marker written by the Verify hard-gate **only** when all 7 conditions are genuinely confirmed by their hard artifact (never an exit code / label / "process launched" proxy). The marker also flips `substrate_ready=true` in the queue-client heartbeat (Step 6b), so readiness is observable both on the node (`~/SUBSTRATE_READY.json`) and from the central queue (the client's heartbeat field).
+**A node is "ready to hydrate a seed" IFF it carries `~/SUBSTRATE_READY.json`** — the durable marker written by the Verify hard-gate **only** when every required gate (8 classic / 9 DIND, incl. the mandatory headless-Chromium-launch gate) is genuinely confirmed by its hard artifact (never an exit code / label / "process launched" proxy). The marker also flips `substrate_ready=true` in the queue-client heartbeat (Step 6b), so readiness is observable both on the node (`~/SUBSTRATE_READY.json`) and from the central queue (the client's heartbeat field).
 
 **Downstream seed-work MUST treat the absence of `SUBSTRATE_READY` as a HARD STOP:** do not clone, do not hydrate, do not run any seed on a node that lacks the marker — emit `BLOCKED_REASON=substrate_not_ready` and stop. Check explicitly before any hydration:
 
@@ -810,7 +821,7 @@ docker exec "$NODE_NAME" test -f ~/SUBSTRATE_READY.json \
   || { echo "BLOCKED_REASON=substrate_not_ready"; exit 1; }
 ```
 
-There is **no partial ready**: a substrate is either fully `SUBSTRATE_READY` (all 7 hard-confirmed) or it is refused. A half-baked substrate is never handed over. (Out of scope here: a node that was ready and later *degraded* — that is a separate broken-setup/staleness case, not this gate.)
+There is **no partial ready**: a substrate is either fully `SUBSTRATE_READY` (all required gates hard-confirmed) or it is refused. A half-baked substrate is never handed over. (Out of scope here: a node that was ready and later *degraded* — that is a separate broken-setup/staleness case, not this gate.)
 
 > **UPSTREAM RECOMMENDATION (mypeople queue-server):** store the `substrate_ready` heartbeat field on the client record and surface it in `/clients` + the HUD, so `mp status` shows readiness at a glance. Until then, `~/SUBSTRATE_READY.json` on the node is the canonical artifact.
 

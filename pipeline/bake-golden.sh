@@ -68,6 +68,52 @@ $DOCKER cp "$ROOT/pipeline/queue-client-v2-shim.py" "$B":/tmp/queue-client-v2-sh
 $DOCKER exec -u tester "$B" python3 /tmp/queue-client-v2-shim.py /home/tester/mypeople/bin/queue-client.py
 $DOCKER exec -u tester "$B" python3 -c 'import ast,sys; ast.parse(open("/home/tester/mypeople/bin/queue-client.py").read()); print("  queue-client.py parses ✓")'
 
+echo "[bake] 6. Chromium OS deps + pre-warmed Playwright browser (card fb8ffbb6d8b4a0ed)"
+# ROOT-CAUSE FOLD (hydration run 1ab7bbd104f7b1e1): Playwright fetches the Chromium
+# BINARY, but the Debian 12 base lacks the OS shared libraries Chromium links against
+# (libglib-2.0.so.0, libnss3, …) — Chromium dies at launch with
+# 'error while loading shared libraries: libglib-2.0.so.0'. EVERY browser-verified seed
+# on this image hit it and had to run `sudo npx playwright install-deps chromium`
+# in-container, voiding the one-shot. Fix at the IMAGE, not the seed:
+#   (a) install the Chromium/Playwright OS deps here at BAKE time — explicit apt list
+#       (deterministic, no node needed, == `playwright install-deps chromium`); and
+#   (b) pre-warm the Playwright Chromium browser into tester's cache so a fresh node
+#       launches headless Chromium with ZERO in-container installs (the seed's own
+#       `npx playwright install chromium` then hits a warm cache instead of re-fetching).
+# The pinned package set is validated: a fresh install of these + `playwright install
+# chromium` launches headless Chromium clean on this base (see ## Verify gate 9).
+$DOCKER exec -u root "$B" bash -lc '
+  set -e
+  export DEBIAN_FRONTEND=noninteractive
+  apt-get update -qq >/dev/null
+  apt-get install -y -qq --no-install-recommends \
+    libglib2.0-0 libnss3 libnspr4 libdbus-1-3 libatk1.0-0 libatk-bridge2.0-0 \
+    libcups2 libdrm2 libatspi2.0-0 libx11-6 libxcomposite1 libxdamage1 libxext6 \
+    libxfixes3 libxrandr2 libgbm1 libxcb1 libxkbcommon0 libpango-1.0-0 libcairo2 \
+    libasound2 libxshmfence1 fonts-liberation >/dev/null
+  apt-get clean; rm -rf /var/lib/apt/lists/*
+  echo "  apt chromium deps installed (libglib-2.0=$(ldconfig -p | grep -c libglib-2.0) libnss3=$(ldconfig -p | grep -c libnss3))"
+'
+# Pre-warm the browser as tester so the cache lands in tester HOME (image layer, NOT the
+# per-node leased ~/.claude volume, which is the only mount at spin time).
+$DOCKER exec -u tester "$B" bash -lc '
+  set -e
+  mkdir -p ~/.pw-selftest && cd ~/.pw-selftest
+  # No `npm init` — npm rejects a package name beginning with "." (the .pw-selftest dir);
+  # `npm install` needs no package.json and installs straight into ./node_modules.
+  PLAYWRIGHT_SKIP_BROWSER_DOWNLOAD=1 npm install playwright >/dev/null 2>&1
+  PWVER=$(sed -n "s/.*\"version\": *\"\([^\"]*\)\".*/\1/p" node_modules/playwright/package.json | head -1)
+  echo "  playwright js installed: $PWVER — downloading chromium browser ..."
+  npx playwright install chromium 2>&1 | grep -iE "download|install" | tail -3
+  echo "  chromium cache: $(du -sh ~/.cache/ms-playwright | cut -f1)"
+'
+# Drop the committed launch probe (single source of truth: pipeline/chromium-launch-probe.js)
+# and PROVE headless Chromium launches now — a bake that cannot launch Chromium FAILS HARD.
+$DOCKER cp "$ROOT/pipeline/chromium-launch-probe.js" "$B":/tmp/launch.js
+$DOCKER exec -u root "$B" bash -lc 'install -o tester -g tester -m 644 /tmp/launch.js /home/tester/.pw-selftest/launch.js && rm -f /tmp/launch.js'
+echo -n "[bake] 6. chromium launch self-check: "
+$DOCKER exec -u tester "$B" node /home/tester/.pw-selftest/launch.js
+
 echo "[bake] commit -> $OUT"
 $DOCKER commit --change 'ENTRYPOINT ["/usr/local/bin/seedbed-golden-boot"]' "$B" "$OUT" >/dev/null
 
@@ -79,5 +125,6 @@ $DOCKER run --rm --entrypoint sh "$OUT" -c '
   echo -n "claude-wrapper-fwd="; tail -1 /usr/local/bin/claude-wrapper | grep -q "\"\$@\"" && echo ok || echo BAD
   echo -n "entrypoint-placeholder="; grep -o "new-session -d -s mc-main -n console" /usr/local/bin/seedbed-golden-boot || echo BAD
   echo -n "queue-client-v2(must be ok)="; grep -q "v2-compat-shim" /home/tester/mypeople/bin/queue-client.py && grep -q "isinstance(tasks, dict)" /home/tester/mypeople/bin/queue-client.py && echo ok || echo BAD
+  echo -n "chromium-launch(must be ok)="; node /home/tester/.pw-selftest/launch.js 2>&1 | grep -q "^CHROMIUM_OK" && echo ok || echo BAD
 '
 echo "[bake] DONE: $OUT"
