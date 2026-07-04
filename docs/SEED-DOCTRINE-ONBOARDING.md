@@ -29,9 +29,13 @@ Read in order:
    acceptance driver [bin/verify-acceptance.sh](../bin/verify-acceptance.sh) · the node spec
    [SEED/seedbed.seed.md](../SEED/seedbed.seed.md)
 
-5. **Pillar #3 — external verification** — never trust the hydrator's "done"; a fresh BLIND tester
-   judges real running state.
-   → the role separation: [harden.seed.md → Roles](../SEED/harden.seed.md#roles-strict-separation--the-documented-hardening-roles-never-blur-them) ·
+5. **Pillar #3 — external verification** — the in-container builder's own `## Verify` is only its
+   *self-signal* ("I think I'm done"), never the truth; gated on a recorded hydration, a SECOND engineer
+   on the **host** then drives the real product in a browser **feature-by-feature like the CEO** — recorded
+   (b-roll) + attached to the card as the only pass that counts; bugs loop hub-and-spoke through the Boss,
+   who classifies each gap seed-vs-adherence and folds the seed fix.
+   → the roles + recording gate + bug loop: [harden.seed.md → Roles](../SEED/harden.seed.md#roles-strict-separation--the-documented-hardening-roles-never-blur-them)
+   · [harden.seed.md → Loop](../SEED/harden.seed.md#loop) ·
    the substrate hard-gate: [seedbed.seed.md → Verify (SUBSTRATE_READY 7-gate)](../SEED/seedbed.seed.md#verify--agent-driven--reason-over-the-node-do-not-rely-on-a-passfail-script) ·
    dedicated CI (design phase) [plow-pbc/seed-validator](https://github.com/plow-pbc/seed-validator) ·
    interim [plow-pbc/seed-refine](https://github.com/plow-pbc/seed-refine).
