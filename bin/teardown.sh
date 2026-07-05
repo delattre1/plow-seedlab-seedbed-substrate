@@ -16,6 +16,18 @@ HERE="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 ROOT="$(cd "$HERE/.." && pwd)"
 # shellcheck disable=SC1091
 [ -f "$ROOT/bank/bank.env" ] && . "$ROOT/bank/bank.env"
+# Source host-local secrets/defaults (esp. SEEDBED_LEASE_DIR + BANK_FILE) so the
+# lease release hits the SAME lease dir spin.sh acquired into. Mirrors spin.sh:
+# CALLER ENV WINS — snapshot any control vars the caller explicitly exported,
+# source the file, then restore the snapshot. Without this, release-holder falls
+# back to lease.sh's compiled-in default lease dir and ORPHANS the lease on any
+# host whose substrate.env overrides SEEDBED_LEASE_DIR.
+SUBSTRATE_ENV="${SUBSTRATE_ENV:-$HOME/.config/seedbed/substrate.env}"
+_TD_CTRL_VARS="BANK_FILE SEEDBED_LEASE_DIR DOCKER"
+for _v in $_TD_CTRL_VARS; do eval "[ -n \"\${$_v+x}\" ] && _TD_SAVED_$_v=\"\${$_v}\""; done
+# shellcheck disable=SC1090
+[ -f "$SUBSTRATE_ENV" ] && . "$SUBSTRATE_ENV"
+for _v in $_TD_CTRL_VARS; do eval "[ -n \"\${_TD_SAVED_$_v+x}\" ] && $_v=\"\${_TD_SAVED_$_v}\""; done
 LEASE="$ROOT/lease/lease.sh"
 DOCKER="${DOCKER:-docker}"
 
