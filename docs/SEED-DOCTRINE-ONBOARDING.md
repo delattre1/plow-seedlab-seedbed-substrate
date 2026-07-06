@@ -36,11 +36,7 @@ Read in order:
    who classifies each gap seed-vs-adherence and folds the seed fix.
    → the roles + recording gate + bug loop: [harden.seed.md → Roles](../SEED/harden.seed.md#roles-strict-separation--the-documented-hardening-roles-never-blur-them)
    · [harden.seed.md → Loop](../SEED/harden.seed.md#loop) ·
-   the substrate hard-gate: [seedbed.seed.md → Verify (SUBSTRATE_READY 7-gate)](../SEED/seedbed.seed.md#verify--agent-driven--reason-over-the-node-do-not-rely-on-a-passfail-script) ·
-   dedicated CI (design phase) [plow-pbc/seed-validator](https://github.com/plow-pbc/seed-validator) ·
-   interim [plow-pbc/seed-refine](https://github.com/plow-pbc/seed-refine).
-   *(NOT [plow-pbc/knightwatch-reviewer](https://github.com/plow-pbc/knightwatch-reviewer) — that
-   reviews CODE, not seeds.)*
+   the substrate hard-gate: [seedbed.seed.md → Verify (SUBSTRATE_READY 7-gate)](../SEED/seedbed.seed.md#verify--agent-driven--reason-over-the-node-do-not-rely-on-a-passfail-script)
 
 6. **The hard rules** — defined where they are enforced, not restated here.
    → [harden.seed.md → Forbids](../SEED/harden.seed.md#forbids-hard-rules--violating-any-one-voids-the-iteration)
