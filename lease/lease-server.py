@@ -9,6 +9,7 @@ another machine and cannot, so the same lease moves the LOGIN instead of the mou
   POST /return    {lease_id, credentials} -> stores the login back, frees the volume
   GET  /status                            -> lease.sh status (names and holders only)
   POST /token                             -> {token}: the owner's long-lived login (claude setup-token)
+  POST /beacon                            -> logs one boot-step line from a VM (no auth, no secrets)
 
 /token is the simpler source: a setup-token login lasts about a year and has no refresh token, so
 every one of the owner's VMs can use the same one at once without logging each other out, and it
@@ -176,6 +177,13 @@ class H(BaseHTTPRequestHandler):
         self._send(404, {"error": "not found"})
 
     def do_POST(self):
+        if self._path() == "/beacon":
+            # A VM saying how far its boot got: the one view into a machine we cannot log into.
+            # Unauthenticated, so it carries step names only and is logged short and printable.
+            raw = self.rfile.read(min(int(self.headers.get("Content-Length") or 0), 300))
+            line = "".join(c if c.isprintable() else " " for c in raw.decode("utf-8", "replace"))[:240]
+            log("beacon %s" % line)
+            return self._send(200, {"ok": True})
         if owner_of(self.headers.get("X-Plow-Index-Assertion", "")) != ALLOWED_OWNER:
             return self._send(401, {"error": "not the bank owner's agent"})
         try:
