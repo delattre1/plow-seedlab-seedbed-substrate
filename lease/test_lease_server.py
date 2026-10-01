@@ -37,4 +37,22 @@ m["expires"] = time.time() - 1
 ls.meta_path("claude-auth-bank-02").write_text(json.dumps(m))
 code, out = ls.checkout("vm:b")                                          # expired holder reaped
 assert code == 200 and out["credentials"]["claudeAiOauth"]["refreshToken"] == "r2", out
+# /token over real HTTP: only the owner's agent gets the login; nobody else, and not before it exists.
+import threading, urllib.request, urllib.error
+from http.server import ThreadingHTTPServer
+ls.TOKEN_FILE = tmp / "token"
+ls.owner_of = lambda assertion: {"mine": "me", "theirs": "someone-else"}.get(assertion)
+srv = ThreadingHTTPServer(("127.0.0.1", 0), ls.H); threading.Thread(target=srv.serve_forever, daemon=True).start()
+def ask(who):
+    req = urllib.request.Request("http://127.0.0.1:%d/claude-bank/token" % srv.server_port, data=b"{}",
+                                 headers={"X-Plow-Index-Assertion": who, "Content-Type": "application/json"})
+    try:
+        with urllib.request.urlopen(req) as r: return r.status, json.load(r)
+    except urllib.error.HTTPError as e: return e.code, json.load(e)
+assert ask("mine")[0] == 503                                             # nothing stored yet
+ls.TOKEN_FILE.write_text("sk-ant-oat01-test\n")
+assert ask("mine") == (200, {"token": "sk-ant-oat01-test"})
+assert ask("theirs")[0] == 401 and "token" not in ask("theirs")[1]       # a stranger's install
+assert ask("")[0] == 401
+srv.shutdown()
 print("lease-server self-check OK")
