@@ -10,11 +10,14 @@ another machine and cannot, so the same lease moves the LOGIN instead of the mou
   GET  /status                            -> lease.sh status (names and holders only)
   POST /token                             -> {token}: the owner's long-lived login (claude setup-token)
   POST /beacon                            -> logs one boot-step line from a VM (no auth, no secrets)
+  POST /skills                            -> the owner's personal Claude skills, a .tar.gz (same check)
 
 /token is the simpler source: a setup-token login lasts about a year and has no refresh token, so
 every one of the owner's VMs can use the same one at once without logging each other out, and it
 cannot die from sitting idle the way a bank volume's login does. It lives in TOKEN_FILE on this
 server only -- never in an image -- and goes only to the owner's own agents (same check as below).
+/skills is the same deal for SKILLS_FILE (lease/sync-skills.sh packs it on the owner's Mac): no
+credentials, but the owner's hostnames, contacts and accounts, so never in the public image either.
 
 The one-holder rule is lease.sh's own: every checkout is `lease.sh acquire`, every free is
 `lease.sh release`. While a VM holds a volume, the bank never touches that login except to
@@ -54,6 +57,7 @@ ALLOWED_OWNER = os.environ["ALLOWED_OWNER_UID"]
 LEASE_TTL = int(os.environ.get("LEASE_TTL", "1800"))
 VOL_UID = int(os.environ.get("VOL_UID", "1001"))            # bank volumes are owned by tester
 TOKEN_FILE = Path(os.environ.get("TOKEN_FILE", "/secret/claude-setup-token"))
+SKILLS_FILE = Path(os.environ.get("SKILLS_FILE", "/secret/skills.tar.gz"))
 LOCK = threading.Lock()
 os.environ["LEASE_DIR"] = str(LEASES)
 
@@ -200,6 +204,17 @@ class H(BaseHTTPRequestHandler):
                 return self._send(503, {"error": "no login stored on the bank yet"})
             log("token handed to %s" % str(body.get("holder") or "?")[:120])
             return self._send(200, {"token": token})
+        if p == "/skills":
+            try:
+                data = SKILLS_FILE.read_bytes()
+            except OSError:
+                return self._send(503, {"error": "no skills stored on the bank yet"})
+            log("skills handed to %s" % str(body.get("holder") or "?")[:120])
+            self.send_response(200)
+            self.send_header("Content-Type", "application/gzip")
+            self.send_header("Content-Length", str(len(data)))
+            self.end_headers()
+            return self.wfile.write(data)
         with LOCK:
             if p == "/checkout":
                 holder = str(body.get("holder") or "")[:120]

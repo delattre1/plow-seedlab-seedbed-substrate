@@ -54,5 +54,17 @@ ls.TOKEN_FILE.write_text("sk-ant-oat01-test\n")
 assert ask("mine") == (200, {"token": "sk-ant-oat01-test"})
 assert ask("theirs")[0] == 401 and "token" not in ask("theirs")[1]       # a stranger's install
 assert ask("")[0] == 401
+# /skills: the same owner check, raw bytes back.
+ls.SKILLS_FILE = tmp / "skills.tar.gz"
+def skills(who):
+    req = urllib.request.Request("http://127.0.0.1:%d/claude-bank/skills" % srv.server_port, data=b"{}",
+                                 headers={"X-Plow-Index-Assertion": who, "Content-Type": "application/json"})
+    try:
+        with urllib.request.urlopen(req) as r: return r.status, r.read()
+    except urllib.error.HTTPError as e: return e.code, e.read()
+assert skills("mine")[0] == 503
+ls.SKILLS_FILE.write_bytes(b"\x1f\x8bpretend")
+assert skills("mine") == (200, b"\x1f\x8bpretend")
+assert skills("theirs")[0] == 401 and b"pretend" not in skills("theirs")[1]
 srv.shutdown()
 print("lease-server self-check OK")
