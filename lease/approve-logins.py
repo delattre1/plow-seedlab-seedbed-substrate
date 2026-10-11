@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """One sitting: the owner approves N Claude logins, back to back, straight into the Auth Bank pool.
 
-    python3 lease/approve-logins.py 10        (or double-click ~/Desktop/Add Claude logins.command)
+    python3 lease/approve-logins.py 10        (or double-click ~/Downloads/Add Claude logins.command)
 
 For each one, `claude setup-token` opens Claude's authorize page in the browser. The owner signs in
 (or switches account) and approves there, and pastes the code if Claude asks for one. That is the only

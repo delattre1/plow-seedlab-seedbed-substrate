@@ -172,6 +172,27 @@ if [ "$PASSN" = "7/7" ]; then
   fi
 fi
 
+# --- 7b. STEADY-STATE HOLD (H-STABLE §15 gate 2b): re-check at +10/+30m --------
+STAGE=hold
+HELD="n/a"; HOLDLOG=""
+if [ "$PASSN" = "7/7" ]; then
+  HELD="HELD"; prev=0
+  for hm in 10 30; do
+    delta=$(( hm*60 - prev )); prev=$(( hm*60 ))
+    say "HOLD: sleeping ${delta}s → +${hm}m steady-state re-check…"
+    sleep "$delta"
+    HG="$(run_gates)"; HP="$(echo "$HG"|grep -oE 'GATES_PASSED=[0-9]+/7'|cut -d= -f2)"
+    CNTS="$(dex 'for d in queue-server.py todo-server.py queue-client.py boss-supervisor; do printf "%s=%s " "$d" "$(pgrep -fc "$d" 2>/dev/null||echo 0)"; done' 2>/dev/null)"
+    DUPOK="$(dex 'ok=1; for d in queue-server.py todo-server.py queue-client.py boss-supervisor; do [ "$(pgrep -fc "$d" 2>/dev/null||echo 0)" = 1 ] || ok=0; done; echo $ok' 2>/dev/null)"
+    say "HOLD +${hm}m: gates=$HP | $CNTS | single-instance=$DUPOK"
+    HOLDLOG="$HOLDLOG
+  +${hm}m: gates=$HP · daemons[$CNTS] · single-instance=$DUPOK"
+    [ "$HP" = "7/7" ] || { HELD="DRIFTED to $HP at +${hm}m"; break; }
+    [ "$DUPOK" = "1" ] || { HELD="DUPLICATE-DAEMONS at +${hm}m ($CNTS)"; break; }
+  done
+  say "STEADY-STATE: $HELD"
+fi
+
 # --- 8. H-NEW: FLUSH terminal cast off-node BEFORE teardown ------------------
 STAGE=flush
 docker cp "$NODE:/home/tester/recordings/." "$OUTDIR/" >/dev/null 2>&1 || true
@@ -180,7 +201,9 @@ CASTHOST="$(ls "$OUTDIR"/*.cast 2>/dev/null | head -1)"
 
 # --- 9. teardown + verdict (H-DONE: PASS iff 7/7) + auto-post ----------------
 teardown
-[ "$PASSN" = "7/7" ] && VERDICT="PASS (unattended, 7/7)" || VERDICT="FAIL ($PASSN)"
+if [ "$PASSN" = "7/7" ] && [ "$HELD" = "HELD" ]; then VERDICT="PASS (unattended 7/7, HELD steady-state)"
+elif [ "$PASSN" = "7/7" ]; then VERDICT="REACHED 7/7 but $HELD"
+else VERDICT="FAIL ($PASSN)"; fi
 CASTPROOF=""; WEBMPROOF=""
 if [ -n "$CASTHOST" ]; then HX=$(python3 -c 'import secrets;print(secrets.token_hex(6))'); cp "$CASTHOST" "/Users/delattre/mypeople/todos/proofs/${HX}_reh2.cast" 2>/dev/null && CASTPROOF="/todo/proof-file/${HX}_reh2.cast"; fi
 if [ -n "$WEBM" ]; then HY=$(python3 -c 'import secrets;print(secrets.token_hex(6))'); cp "$WEBM" "/Users/delattre/mypeople/todos/proofs/${HY}_reh2.webm" 2>/dev/null && WEBMPROOF="/todo/proof-file/${HY}_reh2.webm"; fi
@@ -188,12 +211,12 @@ say "VERDICT=$VERDICT gates=$PASSN kicks=$KICKS ready=${TREADY}s cast=$CASTPROOF
 post_card "REHEARSAL #2 (final driver) — FULLY HANDS-OFF (node $NODE, disposable, self-spun→self-torn-down).
 RESULT: $VERDICT · manual kicks needed: $KICKS
 $DURLINE
-SUBSTRATE_READY 7-gate:
+SUBSTRATE_READY 7-gate (at completion):
 $GATES
-COMPLETION = 7/7 gates (H-DONE applied to detection): the driver polls the gate and declares success the instant it's 7/7 — no longer waits on the lagging seed marker (fixes the TIMEOUT-while-7/7 semantics).
-Driver-implemented contracts: H3 recorded pane · H4 flags pre-set + defensive dismiss · H5 self-heartbeat/auto-report · H6 queue stable-200x3 · H7 tailscaled --socket pinned · H-NEW flush-before-teardown · auto-teardown (rm+lease release).
+STEADY-STATE HOLD (H-STABLE §15 gate 2b) = $HELD$HOLDLOG
+COMPLETION = 7/7 gates (H-DONE applied to detection). Driver contracts: H3 recorded pane · H4 flags pre-set + dismiss · H5 self-heartbeat · H6 queue stable-200x3 · H7 socket-pinned · H-NEW flush-before-teardown · detached (tmux -L reh2, survives session) · auto-teardown.
 RECORDINGS: terminal cast ${CASTPROOF:-'(none)'}${WEBMPROOF:+ · browser webm attached}.
-$([ "$PASSN" = '7/7' ] && [ "$KICKS" = 0 ] && [ -n "$CASTPROOF" ] && [ -n "$WEBMPROOF" ] && echo '✅ CLOSED: unattended 7/7 + 0 kicks + terminal AND browser recording, within a known budget.' || echo 'Not fully closed yet — check gates/kicks/recordings above.')"
+$([ "$PASSN" = '7/7' ] && [ "$HELD" = 'HELD' ] && [ "$KICKS" = 0 ] && [ -n "$CASTPROOF" ] && [ -n "$WEBMPROOF" ] && echo '✅ FULLY CLOSED: unattended 7/7 + HELD steady-state (+10/+30m, single-instance daemons) + 0 kicks + terminal AND browser. The install REACHES and HOLDS 7/7.' || echo 'NOT fully closed — the hydrate reaches 7/7 but steady-state/recordings need the above; iterating.')"
 [ -n "$CASTPROOF" ] && curl -fsS -X POST http://127.0.0.1:9933/todo/proof -H "Content-Type: application/json" -H "X-Queue-Secret: $MPSEC" -d "{\"task_id\":\"$CARD\",\"kind\":\"link\",\"url\":\"$CASTPROOF\"}" >/dev/null 2>&1 || true
 [ -n "$WEBMPROOF" ] && curl -fsS -X POST http://127.0.0.1:9933/todo/proof -H "Content-Type: application/json" -H "X-Queue-Secret: $MPSEC" -d "{\"task_id\":\"$CARD\",\"kind\":\"video\",\"url\":\"$WEBMPROOF\"}" >/dev/null 2>&1 || true
 say "done."
