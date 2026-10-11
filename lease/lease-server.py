@@ -1,107 +1,53 @@
 #!/usr/bin/env python3
-"""The auth bank's lease, over HTTPS -- for containers that cannot mount a bank volume.
+"""The Auth Bank over HTTPS: the owner's Claude logins for the owner's own cloud agents.
 
-spin.sh mounts a leased claude-auth-bank-NN volume at ~/.claude. A Plow cloud VM runs on
-another machine and cannot, so the same lease moves the LOGIN instead of the mount:
+  POST /checkout  {holder}                      -> {lease_id, account, token}: one pool login, held by
+                                                   this caller alone (409: no free login)
+  POST /heartbeat {lease_id, usage, limit_hit}  -> keeps it; records the usage the caller saw; on a usage
+                                                   limit (or a disabled account) adds "rotate": a
+                                                   DIFFERENT login, reserved (the old one stays held)
+  POST /return    {lease_id}                    -> frees it (after a rotation: the OLD one, once the
+                                                   caller's Claude is back on the new one)
+  POST /token                                   -> {token}: the single long-lived login, for releases
+                                                   older than the pool client (transition only)
+  POST /skills                                  -> the owner's personal Claude skills, a .tar.gz
+  POST /beacon                                  -> logs one boot-step line from a VM (no auth, no secrets)
+  GET  /status                                  -> pool counts only (it is unauthenticated)
 
-  POST /checkout  {holder}               -> {lease_id, volume, credentials}
-  POST /heartbeat {lease_id, credentials} -> keeps the lease; stores the refreshed login
-  POST /return    {lease_id, credentials} -> stores the login back, frees the volume
-  GET  /status                            -> lease.sh status (names and holders only)
-  POST /token                             -> {token}: the owner's long-lived login (claude setup-token)
-  POST /beacon                            -> logs one boot-step line from a VM (no auth, no secrets)
-  POST /skills                            -> the owner's personal Claude skills, a .tar.gz (same check)
+The pool is pool.py (accounts are `claude setup-token` logins the owner adds over ssh; see there).
+A setup-token has no refresh token, so lending one never races a refresh the way a shared ~/.claude
+login does -- which is what killed the volume bank (every volume NEEDS-LOGIN since 09-27). The
+volumes and lease.sh stay for spin.sh on this host; nothing here touches them any more.
 
-/token is the simpler source: a setup-token login lasts about a year and has no refresh token, so
-every one of the owner's VMs can use the same one at once without logging each other out, and it
-cannot die from sitting idle the way a bank volume's login does. It lives in TOKEN_FILE on this
-server only -- never in an image -- and goes only to the owner's own agents (same check as below).
-/skills is the same deal for SKILLS_FILE (lease/sync-skills.sh packs it on the owner's Mac): no
-credentials, but the owner's hostnames, contacts and accounts, so never in the public image either.
+Who may call: a caller proves it is one of the owner's Plow agents with a Plow index assertion
+(minted in the VM through its PLOW_API_BASE proxy, 5 minutes, single purpose), which this server
+resolves at Plow and compares to ALLOWED_OWNER_UID. No secret lives in any image.
 
-The one-holder rule is lease.sh's own: every checkout is `lease.sh acquire`, every free is
-`lease.sh release`. While a VM holds a volume, the bank never touches that login except to
-store what the VM hands back, so exactly one process ever refreshes it -- which is the whole
-reason the bank exists (two refreshers of one login log each other out).
-
-Who may check out: a caller proves it is one of the owner's Plow agents with a Plow index
-assertion (minted in the VM through its PLOW_API_BASE proxy, 5 minutes, single purpose),
-which this server resolves at Plow and compares to ALLOWED_OWNER_UID. No secret lives in
-any image.
-
-A volume whose login is dead (no refresh token) is left leased to NEEDS-LOGIN, so acquire
-skips it until it is authed again.
+/skills is the owner's skills (lease/sync-skills.py packs them on the owner's Mac): no credentials,
+but the owner's hostnames, contacts and accounts, so never in the public image either.
 """
 import json
 import os
-import subprocess
-import threading
+import sys
 import time
 import urllib.request
-import uuid
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 
-HERE = Path(__file__).resolve().parent
-LEASE_SH = str(HERE / "lease.sh")
-BANK_ROOT = Path(os.environ.get("BANK_ROOT", "/bank"))      # each volume mounted at /bank/<name>
-LEASES = Path(os.environ.get("LEASE_DIR", "/leases"))
 PORT = int(os.environ.get("PORT", "8797"))
 PREFIX = os.environ.get("PATH_PREFIX", "/claude-bank")      # the funnel mount path, if kept
 PLOW = os.environ.get("PLOW_API", "https://api.plow.co")
 ALLOWED_OWNER = os.environ["ALLOWED_OWNER_UID"]
-# ponytail: a VM that stops heartbeating (destroyed: Plow gives no notice) frees its volume
-# after LEASE_TTL with the last login it stored. Ceiling: a VM cut off longer than that and
-# then back would share the login with the next holder; upgrade path is fencing the VM by
-# lease_id on every heartbeat reply (it already stops if told its lease is gone).
-LEASE_TTL = int(os.environ.get("LEASE_TTL", "1800"))
-VOL_UID = int(os.environ.get("VOL_UID", "1001"))            # bank volumes are owned by tester
+# A holder that stops heartbeating (destroyed: Plow gives no notice) frees its login after this.
+LEASE_TTL = int(os.environ.get("LEASE_TTL", "600"))
+sys.path.insert(0, str(Path(__file__).resolve().parent))
+import pool  # noqa: E402
 TOKEN_FILE = Path(os.environ.get("TOKEN_FILE", "/secret/claude-setup-token"))
 SKILLS_FILE = Path(os.environ.get("SKILLS_FILE", "/secret/skills.tar.gz"))
-LOCK = threading.Lock()
-os.environ["LEASE_DIR"] = str(LEASES)
 
 
 def log(msg):
     print(time.strftime("%Y-%m-%dT%H:%M:%SZ ", time.gmtime()) + msg, flush=True)
-
-
-def lease(*args):
-    r = subprocess.run([LEASE_SH, *args], capture_output=True, text=True)
-    return r.returncode, r.stdout.strip()
-
-
-def meta_path(vol):
-    return LEASES / vol / "lease.json"      # beside lease.sh's own `holder` file
-
-
-def read_meta(vol):
-    try:
-        return json.loads(meta_path(vol).read_text())
-    except (OSError, ValueError):
-        return {}
-
-
-def creds_path(vol):
-    return BANK_ROOT / vol / ".credentials.json"
-
-
-def login_alive(creds):
-    o = (creds or {}).get("claudeAiOauth") or {}
-    exp = o.get("refreshTokenExpiresAt") or 0
-    return bool(o.get("refreshToken")) and (not exp or exp / 1000 > time.time())
-
-
-def store(vol, creds):
-    if not login_alive(creds):
-        return  # never overwrite a bank login with a dead one
-    p = creds_path(vol)
-    tmp = p.with_suffix(".tmp")
-    fd = os.open(tmp, os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o600)
-    with os.fdopen(fd, "w") as f:
-        json.dump(creds, f)
-    os.chown(tmp, VOL_UID, -1)
-    os.replace(tmp, p)
 
 
 def owner_of(assertion):
@@ -112,52 +58,6 @@ def owner_of(assertion):
             return json.load(r).get("owner_uid")
     except Exception:
         return None
-
-
-def by_lease_id(lease_id):
-    for d in LEASES.glob("*/lease.json"):
-        m = read_meta(d.parent.name)
-        if m.get("lease_id") == lease_id:
-            return d.parent.name, m
-    return None, None
-
-
-def reap():
-    """Free the volumes of holders that stopped heartbeating."""
-    for d in LEASES.glob("*/lease.json"):
-        vol, m = d.parent.name, read_meta(d.parent.name)
-        if m.get("expires", 0) < time.time():
-            lease("release", vol)
-            log(f"expired {vol} held by {m.get('holder')}")
-
-
-def checkout(holder):
-    reap()
-    for d in LEASES.glob("*/lease.json"):   # a restarted VM gets its own volume back
-        m = read_meta(d.parent.name)
-        if m.get("holder") == holder:
-            vol = d.parent.name
-            m["expires"] = time.time() + LEASE_TTL
-            meta_path(vol).write_text(json.dumps(m))
-            return 200, {"lease_id": m["lease_id"], "volume": vol,
-                         "credentials": json.loads(creds_path(vol).read_text())}
-    while True:
-        rc, vol = lease("acquire", holder)
-        if rc != 0:
-            return 409, {"error": "no free login in the bank"}
-        try:
-            creds = json.loads(creds_path(vol).read_text())
-        except (OSError, ValueError):
-            creds = None
-        if login_alive(creds):
-            break
-        # Dead login: keep it locked, relabelled, so acquire stops handing it out; next one.
-        (LEASES / vol / "holder").write_text("NEEDS-LOGIN\t%s\n" % time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime()))
-        log(f"{vol} has no live login, parked as NEEDS-LOGIN")
-    m = {"holder": holder, "lease_id": uuid.uuid4().hex, "expires": time.time() + LEASE_TTL}
-    meta_path(vol).write_text(json.dumps(m))
-    log(f"checkout {vol} -> {holder}")
-    return 200, {"lease_id": m["lease_id"], "volume": vol, "credentials": creds}
 
 
 class H(BaseHTTPRequestHandler):
@@ -175,9 +75,9 @@ class H(BaseHTTPRequestHandler):
 
     def do_GET(self):
         if self._path() == "/status":
-            with LOCK:
-                reap()
-                return self._send(200, {"status": lease("status")[1].splitlines()})
+            rows = pool.report()
+            return self._send(200, {"accounts": len(rows), "held": sum(r["holder"] != "-" for r in rows),
+                                    "usable": sum(r["state"] == "ok" for r in rows)})
         self._send(404, {"error": "not found"})
 
     def do_POST(self):
@@ -215,26 +115,31 @@ class H(BaseHTTPRequestHandler):
             self.send_header("Content-Length", str(len(data)))
             self.end_headers()
             return self.wfile.write(data)
-        with LOCK:
-            if p == "/checkout":
-                holder = str(body.get("holder") or "")[:120]
-                if not holder:
-                    return self._send(400, {"error": "holder required"})
-                return self._send(*checkout("vm:" + holder))
-            vol, m = by_lease_id(str(body.get("lease_id") or ""))
-            if not vol:
-                # The VM must stop using the login: someone else may hold it now.
-                return self._send(410, {"error": "lease gone"})
-            if body.get("credentials"):
-                store(vol, body["credentials"])
-            if p == "/heartbeat":
-                m["expires"] = time.time() + LEASE_TTL
-                meta_path(vol).write_text(json.dumps(m))
-                return self._send(200, {"ok": True, "volume": vol})
-            if p == "/return":
-                lease("release", vol)
-                log(f"returned {vol} from {m.get('holder')}")
-                return self._send(200, {"ok": True})
+        if p == "/checkout":
+            holder = str(body.get("holder") or "")[:120]
+            if not holder:
+                return self._send(400, {"error": "holder required"})
+            got = pool.checkout("vm:" + holder, LEASE_TTL)
+            if not got:
+                log("no free login for %s" % holder)
+                return self._send(409, {"error": "no-capacity: every login in the pool is held, limited or disabled"})
+            log("checkout %s -> %s" % (got["account"], holder))
+            return self._send(200, got)
+        if p == "/heartbeat":
+            out = pool.heartbeat(str(body.get("lease_id") or ""), LEASE_TTL,
+                                 usage=body.get("usage") if isinstance(body.get("usage"), dict) else None,
+                                 limit_hit=bool(body.get("limit_hit")))
+            if out is None:
+                return self._send(410, {"error": "lease gone"})   # stop using that login: it may be lent again
+            if out.get("rotate"):
+                log("rotate: reserved %s for %s" % (out["rotate"]["account"], str(body.get("holder") or "?")[:120]))
+            elif out.get("no_capacity"):
+                log("rotate wanted, no free login (%s)" % str(body.get("holder") or "?")[:120])
+            return self._send(200, out)
+        if p == "/return":
+            ok = pool.give_back(str(body.get("lease_id") or ""))
+            log("returned a lease (%s)" % ("ok" if ok else "already gone"))
+            return self._send(200 if ok else 410, {"ok": ok})
         self._send(404, {"error": "not found"})
 
     def log_message(self, *a):
@@ -242,6 +147,5 @@ class H(BaseHTTPRequestHandler):
 
 
 if __name__ == "__main__":
-    LEASES.mkdir(parents=True, exist_ok=True)
     log(f"auth bank lease server on 127.0.0.1:{PORT}, owner {ALLOWED_OWNER}")
     ThreadingHTTPServer(("0.0.0.0", PORT), H).serve_forever()
