@@ -98,6 +98,16 @@ with pool.state() as st:
 assert call("/heartbeat", {"lease_id": rot["lease_id"]})[0] == 410
 assert call("/checkout", {"holder": "vm6"})[0] == 200
 
+# A holder whose login stopped working disables it for everyone and is moved off it.
+with pool.state() as st:
+    st["leases"].clear()
+    for acc in st["accounts"].values():
+        acc.update(disabled=False, limited_until=0)
+_, x = call("/checkout", {"holder": "vm7"})
+_, hb = call("/heartbeat", {"lease_id": x["lease_id"], "bad_login": True})
+assert hb["rotate"]["account"] != x["account"]
+assert "login stopped working" in {r["account"]: r for r in pool.report()}[x["account"]]["state"]
+
 # /status is unauthenticated: counts only, no names, holders or tokens.
 st = json.load(urllib.request.urlopen("http://127.0.0.1:%d/claude-bank/status" % srv.server_port))
 assert set(st) == {"accounts", "held", "usable"} and st["accounts"] == 3, st

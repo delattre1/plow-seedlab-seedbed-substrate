@@ -128,7 +128,7 @@ class H(BaseHTTPRequestHandler):
         if p == "/heartbeat":
             out = pool.heartbeat(str(body.get("lease_id") or ""), LEASE_TTL,
                                  usage=body.get("usage") if isinstance(body.get("usage"), dict) else None,
-                                 limit_hit=bool(body.get("limit_hit")))
+                                 limit_hit=bool(body.get("limit_hit")), bad_login=bool(body.get("bad_login")))
             if out is None:
                 return self._send(410, {"error": "lease gone"})   # stop using that login: it may be lent again
             if out.get("rotate"):

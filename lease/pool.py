@@ -105,11 +105,12 @@ def _record(acct, delta, now):
         del days[d]
 
 
-def heartbeat(lease_id, ttl, usage=None, limit_hit=False, now=None):
+def heartbeat(lease_id, ttl, usage=None, limit_hit=False, bad_login=False, now=None):
     """Keep the lease; record the usage the holder saw. Returns None if the lease is gone, else
     {"ok": True} plus, when the holder must move (limit hit, or its account was disabled), either
     "rotate": {lease_id, account, token} (a different account, reserved; the old lease stays held)
-    or "no_capacity": True."""
+    or "no_capacity": True. `bad_login`: the holder found the login does not work (expired, or
+    revoked by hand), so the account is disabled for everyone."""
     now = now or time.time()
     with state() as st:
         _reap(st, now)
@@ -124,6 +125,8 @@ def heartbeat(lease_id, ttl, usage=None, limit_hit=False, now=None):
         if delta:
             _record(acct, delta, now)
         l["reported"] = {k: max(seen[k], prev.get(k, 0)) for k in USAGE_KEYS}
+        if bad_login and not acct.get("disabled"):
+            acct.update(disabled=True, disabled_reason="login stopped working", disabled_at=now)
         if limit_hit and not l.get("limit_seen"):
             l["limit_seen"] = True
             acct.setdefault("limit_hits", []).append(now)

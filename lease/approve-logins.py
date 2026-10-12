@@ -86,8 +86,15 @@ def works(token):
     return r.returncode == 0
 
 
+def reachable():
+    return subprocess.run(POOL_LIST, capture_output=True, timeout=60).returncode == 0
+
+
 def main():
     n = int(sys.argv[1]) if len(sys.argv) > 1 else 10
+    # No approval may be wasted: a login caught while the pool is unreachable has nowhere to go.
+    while not reachable():
+        input("\nI can't reach your login server (is Tailscale on?). Turn it on, then press Enter to try again. ")
     print(f"\nAdding {n} Claude logins to your Auth Bank pool. For each one:")
     print("  1. a Claude page opens in your browser: sign in (or switch account) and approve")
     print("  2. if Claude shows a code, paste it here and press Enter")
@@ -109,9 +116,13 @@ def main():
             if NAME.match(name):
                 break
             print("  letters, digits and '-' only")
-        r = subprocess.run(POOL_ADD + [name], input=tok + b"\n", capture_output=True)
-        print(("  added to the pool as " + name) if r.returncode == 0 else
-              "  could not add it: " + r.stderr.decode(errors="replace")[-200:])
+        while True:   # keep the login in memory until it is in the pool: never lose an approval
+            r = subprocess.run(POOL_ADD + [name], input=tok + b"\n", capture_output=True)
+            if r.returncode == 0:
+                print("  added to the pool as " + name)
+                break
+            print("  could not add it yet: " + r.stderr.decode(errors="replace").strip()[-160:])
+            input("  (is Tailscale on?) Press Enter to try again; the login is kept until then. ")
         if r.returncode == 0:
             added.append(name)
         tok = None
