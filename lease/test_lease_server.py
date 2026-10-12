@@ -108,6 +108,19 @@ _, hb = call("/heartbeat", {"lease_id": x["lease_id"], "bad_login": True})
 assert hb["rotate"]["account"] != x["account"]
 assert "login stopped working" in {r["account"]: r for r in pool.report()}[x["account"]]["state"]
 
+# remove: refused while held, then the token file and record are gone.
+held_name = x["account"]
+try:
+    pool.remove(held_name)
+    raise AssertionError("removed a held account")
+except SystemExit:
+    pass
+call("/return", {"lease_id": x["lease_id"]}); call("/return", {"lease_id": hb["rotate"]["lease_id"]})
+pool.remove(held_name)
+assert not (tmp / "pool/accounts" / (held_name + ".token")).exists()
+assert held_name not in [r["account"] for r in pool.report()]
+pool.add(held_name, TOK[held_name])
+
 # /status is unauthenticated: counts only, no names, holders or tokens.
 st = json.load(urllib.request.urlopen("http://127.0.0.1:%d/claude-bank/status" % srv.server_port))
 assert set(st) == {"accounts", "held", "usable"} and st["accounts"] == 3, st

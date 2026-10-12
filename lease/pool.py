@@ -8,6 +8,7 @@ lending one never races a refresh the way a shared ~/.claude login does. The lea
     docker exec -i claude-bank-lease python3 /app/pool.py add NAME   < token     # token on stdin, never argv
     docker exec claude-bank-lease python3 /app/pool.py disable NAME --reason leak
     docker exec claude-bank-lease python3 /app/pool.py enable NAME
+    docker exec claude-bank-lease python3 /app/pool.py remove NAME             # only when nobody holds it
     docker exec claude-bank-lease python3 /app/pool.py list | usage
 
 Usage is what the containers REPORT from their own Claude session logs: Claude has no per-account
@@ -195,6 +196,20 @@ def disable(name, reason="", enable=False):
     return held
 
 
+def remove(name):
+    """Forget an account: its token file and its record. Refused while someone holds it."""
+    with state() as st:
+        if name not in st["accounts"]:
+            raise SystemExit("no account %r" % name)
+        if any(l["account"] == name for l in st["leases"].values()):
+            raise SystemExit("%s is held; disable it first, and remove it once its holder has moved" % name)
+        del st["accounts"][name]
+        try:
+            _token_path(name).unlink()
+        except FileNotFoundError:
+            pass
+
+
 def report(now=None):
     """One row per account: state, holder, tokens reported today / last 5 h / total, last limit."""
     now = now or time.time()
@@ -231,6 +246,9 @@ def main(argv):
             if held:
                 print("its holder moves to another account at its next heartbeat: " + ", ".join(held))
             print("Claude cannot revoke a login remotely: if it leaked, revoke it by hand in Claude's settings.")
+    elif cmd == "remove" and len(argv) == 2:
+        remove(argv[1])
+        print("removed %s" % argv[1])
     elif cmd in ("list", "usage"):
         rows = report()
         if not rows:
