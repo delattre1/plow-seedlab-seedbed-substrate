@@ -107,7 +107,8 @@ def works(token):
     r = subprocess.run(check, shell=True, env=env, capture_output=True, timeout=120)
     if r.returncode:
         shape = "valid" if TOKEN.fullmatch(token) else "invalid"
-        print(f"Claude check failed (exit {r.returncode}; token shape {shape}).")
+        detail = TOKEN.sub(b"[redacted]", ANSI.sub(b"", (r.stderr or r.stdout)[-240:])).decode(errors="replace").strip()
+        print(f"Claude check failed (exit {r.returncode}; token shape {shape}): {detail or 'no diagnostic'}")
     return r.returncode == 0
 
 
