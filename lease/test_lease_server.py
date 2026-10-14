@@ -34,9 +34,9 @@ def call(path, body=None, who="mine"):
 
 TOK = {n: "sk-ant-oat01-" + n * 40 for n in ("aa", "bb", "cc")}
 
-# No login yet: no capacity, and a stranger never gets past the owner check.
+# No login yet: no capacity for every valid Plow agent, while an invalid assertion is refused.
 assert call("/checkout", {"holder": "vm1"})[0] == 409
-assert call("/checkout", {"holder": "vm1"}, who="theirs")[0] == 401
+assert call("/checkout", {"holder": "vm1"}, who="theirs")[0] == 409
 assert call("/checkout", {"holder": "vm1"}, who="")[0] == 401
 for n in ("aa", "bb"):
     pool.add(n, TOK[n] + "\n")
@@ -46,7 +46,7 @@ assert oct((tmp / "pool/accounts/aa.token").stat().st_mode & 0o777) == "0o600"
 c1, a = call("/checkout", {"holder": "vm1"})
 assert c1 == 200 and a["token"] == TOK[a["account"]]
 assert call("/checkout", {"holder": "vm1"})[1]["lease_id"] == a["lease_id"]
-c2, b = call("/checkout", {"holder": "vm2"})
+c2, b = call("/checkout", {"holder": "vm2"}, who="theirs")
 assert c2 == 200 and b["account"] != a["account"]
 assert call("/checkout", {"holder": "vm3"})[0] == 409            # both held: no-capacity
 

@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""The Auth Bank over HTTPS: the owner's Claude logins for the owner's own cloud agents.
+"""The Auth Bank over HTTPS: Claude logins for MyPlow cloud agents.
 
   POST /checkout  {holder}                      -> {lease_id, account, token}: one pool login, held by
                                                    this caller alone (409: no free login)
@@ -19,9 +19,10 @@ A setup-token has no refresh token, so lending one never races a refresh the way
 login does -- which is what killed the volume bank (every volume NEEDS-LOGIN since 09-27). The
 volumes and lease.sh stay for spin.sh on this host; nothing here touches them any more.
 
-Who may call: a caller proves it is one of the owner's Plow agents with a Plow index assertion
+Who may lease: a caller proves it is a Plow agent with a Plow index assertion
 (minted in the VM through its PLOW_API_BASE proxy, 5 minutes, single purpose), which this server
-resolves at Plow and compares to ALLOWED_OWNER_UID. No secret lives in any image.
+resolves at Plow. Only the bank owner may retrieve the legacy token or personal skills. No secret
+lives in any image.
 
 /skills is the owner's skills (lease/sync-skills.py packs them on the owner's Mac): no credentials,
 but the owner's hostnames, contacts and accounts, so never in the public image either.
@@ -88,13 +89,16 @@ class H(BaseHTTPRequestHandler):
             line = "".join(c if c.isprintable() else " " for c in raw.decode("utf-8", "replace"))[:240]
             log("beacon %s" % line)
             return self._send(200, {"ok": True})
-        if owner_of(self.headers.get("X-Plow-Index-Assertion", "")) != ALLOWED_OWNER:
-            return self._send(401, {"error": "not the bank owner's agent"})
+        owner = owner_of(self.headers.get("X-Plow-Index-Assertion", ""))
+        if owner is None:
+            return self._send(401, {"error": "invalid Plow agent assertion"})
         try:
             body = json.loads(self.rfile.read(int(self.headers.get("Content-Length") or 0)) or b"{}")
         except ValueError:
             return self._send(400, {"error": "bad json"})
         p = self._path()
+        if p in ("/token", "/skills") and owner != ALLOWED_OWNER:
+            return self._send(401, {"error": "not the bank owner's agent"})
         if p == "/token":
             try:
                 token = TOKEN_FILE.read_text().strip()
