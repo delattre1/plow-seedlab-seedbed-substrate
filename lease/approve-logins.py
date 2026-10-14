@@ -23,19 +23,32 @@ import tty
 import fcntl
 
 TOKEN = re.compile(rb"sk-ant-[A-Za-z0-9_\-]{20,}")
+ANSI = re.compile(rb"\x1b\][^\x07]*(?:\x07|\x1b\\)|\x1b\[[0-?]*[ -/]*[@-~]")
 SETUP = os.environ.get("SETUP_CMD", "claude setup-token").split()
 POOL_ADD = os.environ.get("POOL_ADD", "ssh delattre-server docker exec -i claude-bank-lease python3 /app/pool.py add").split()
 POOL_LIST = os.environ.get("POOL_LIST", "ssh delattre-server docker exec claude-bank-lease python3 /app/pool.py list").split()
 NAME = re.compile(r"^[a-z0-9][a-z0-9-]{0,39}$")
 
 
-def capture_token():
+def capture_token(setup=SETUP):
     """Run setup-token in a very wide pty (so the token is never wrapped), show the owner everything
     except the token, and return the token (bytes) or None."""
-    found, held = [], [b""]
+    found, held, secret_tail = [], [b""], [None]
 
     def scrub(data, final=False):
+        if secret_tail[0] is not None:
+            secret_tail[0] += data
+            if final:
+                plain = ANSI.sub(b"", secret_tail[0])
+                found.extend(TOKEN.findall(plain))
+            return b""
         buf = held[0] + data
+        start = buf.find(b"sk-ant-")
+        if start >= 0:
+            # Never render the token-bearing tail. Claude's terminal UI can insert cursor-control
+            # bytes inside its token, so redacting only a plain-text regex is not a security boundary.
+            secret_tail[0], held[0] = buf[start:], b""
+            return buf[:start]
         cut = len(buf)
         if not final:                         # hold back an unfinished token, or a tail that may start one
             m = re.search(rb"sk-ant-[A-Za-z0-9_\-]*$", buf)
@@ -52,7 +65,7 @@ def capture_token():
 
     pid, fd = pty.fork()
     if pid == 0:
-        os.execvp(SETUP[0], SETUP)
+        os.execvp(setup[0], setup)
     fcntl.ioctl(fd, termios.TIOCSWINSZ, struct.pack("HHHH", 50, 1000, 0, 0))
     old = termios.tcgetattr(0) if os.isatty(0) else None
     try:
@@ -78,6 +91,15 @@ def capture_token():
     return found[0] if found else None
 
 
+def dry_run():
+    """Exercise ANSI-interleaved token redaction without contacting Claude or the pool."""
+    fake = "import sys; sys.stdout.buffer.write(b'before sk-ant-\\x1b[10G' + b'x' * 40 + b'\\nafter\\n')"
+    token = capture_token([sys.executable, "-c", fake])
+    if token is None:
+        raise SystemExit("dry run did not capture its test login")
+    print("dry run passed: token captured and redacted")
+
+
 def works(token):
     env = dict(os.environ, CLAUDE_CODE_OAUTH_TOKEN=token.decode())
     env.pop("AGENT_ID", None)                 # a nested claude would fire this fleet's Stop hook as us
@@ -91,6 +113,9 @@ def reachable():
 
 
 def main():
+    if sys.argv[1:] == ["--dry-run"]:
+        dry_run()
+        return
     n = int(sys.argv[1]) if len(sys.argv) > 1 else 10
     # No approval may be wasted: a login caught while the pool is unreachable has nowhere to go.
     while not reachable():
