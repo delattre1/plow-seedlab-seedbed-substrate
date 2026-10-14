@@ -23,7 +23,7 @@ import tty
 import fcntl
 
 TOKEN = re.compile(rb"sk-ant-[A-Za-z0-9_\-]{20,}")
-ANSI = re.compile(rb"\x1b\][^\x07]*(?:\x07|\x1b\\)|\x1b\[[0-?]*[ -/]*[@-~]")
+ANSI = re.compile(rb"\x1b(?:\][^\x07]*(?:\x07|\x1b\\)|\[[0-?]*[ -/]*[@-~])")
 SETUP = os.environ.get("SETUP_CMD", "claude setup-token").split()
 POOL_ADD = os.environ.get("POOL_ADD", "ssh delattre-server docker exec -i claude-bank-lease python3 /app/pool.py add").split()
 POOL_LIST = os.environ.get("POOL_LIST", "ssh delattre-server docker exec claude-bank-lease python3 /app/pool.py list").split()
@@ -95,7 +95,7 @@ def dry_run():
     """Exercise ANSI-interleaved token redaction without contacting Claude or the pool."""
     fake = "import sys; sys.stdout.buffer.write(b'before sk-ant-\\x1b[10G' + b'x' * 40 + b'\\nafter\\n')"
     token = capture_token([sys.executable, "-c", fake])
-    if token is None:
+    if token != b"sk-ant-" + b"x" * 40:
         raise SystemExit("dry run did not capture its test login")
     print("dry run passed: token captured and redacted")
 
