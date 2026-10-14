@@ -105,6 +105,9 @@ def works(token):
     env.pop("AGENT_ID", None)                 # a nested claude would fire this fleet's Stop hook as us
     check = os.environ.get("CHECK_CMD", "claude -p 'reply with OK' --model claude-haiku-4-5")
     r = subprocess.run(check, shell=True, env=env, capture_output=True, timeout=120)
+    if r.returncode:
+        shape = "valid" if TOKEN.fullmatch(token) else "invalid"
+        print(f"Claude check failed (exit {r.returncode}; token shape {shape}).")
     return r.returncode == 0
 
 
